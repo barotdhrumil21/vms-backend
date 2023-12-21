@@ -1,0 +1,8 @@
+settings_local.py
+launch.json
+__pycache__
+*.py[cod]
+*.pyc 
+db.sqlite3
+media
+.DS_Store
