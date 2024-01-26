@@ -3,13 +3,18 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
 from authentication.utils import return_400
-from api.models import Supplier
+from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory
 from api.helper import check_string
 import json
+from datetime import datetime
+from django.db import transaction
 
 class CreateSupplier(APIView):
     """
-        Create Supplier API
+        Create Supplier API With Support of:
+        1. POST => To create new instance
+        2. PUT => To Update an existing instance
+        3. DELETE => To delete an instance
     """
     permission_classes = (IsAuthenticated,)
     def post(self,request):
@@ -34,12 +39,15 @@ class CreateSupplier(APIView):
             supplier_obj.person_of_contact = check_string(person_of_contact,"Person Of Contact")
             supplier_obj.phone_no = check_string(phone_no,"Phone No")
             supplier_obj.email = check_string(email,"Email")
-            supplier_obj.categories = categories
-            supplier_obj.remark = check_string(remark,"Remark")
+            supplier_obj.remark = check_string(remark,"Remark") if remark else None
             supplier_obj.save()
-            return Response({"Success":True, "data":{"supplier_id":supplier_obj.id}})
+            for category in categories:
+                supplier_category = SupplierCategory(buyer=buyer,supplier = supplier_obj)
+                supplier_category.name = check_string(category,"category")
+                supplier_category.save()
+            return Response({"success":True, "data":{"supplier_id":supplier_obj.id}})
         except Exception as error:
-            return return_400({"Success":False,"error":f"{error}"})
+            return return_400({"success":False,"error":f"{error}"})
     
     def put(self,request):
         """
@@ -69,11 +77,158 @@ class CreateSupplier(APIView):
                 elif field=="email" and bool(data.get("email")):
                     supplier_obj.email = check_string(data.get("email"),"Email")
                 elif field=="categories" and bool(data.get("categories")):
-                    supplier_obj.categories = data.get("categories")
+                    categories = data.get("categories")
+                    prev_categories = supplier_obj.categories.all()
+                    for prev_category in prev_categories:
+                        if prev_category.name not in categories:
+                            prev_category.active=False
+                            prev_category.save()
+                    for category in categories:
+                        cat_obj = SupplierCategory.objects.filter(supplier=supplier_obj,name=category)
+                        if cat_obj.exists():
+                            cat_obj = cat_obj.last()
+                            if cat_obj.active:
+                                continue
+                            cat_obj.active = True
+                            cat_obj.save()
+                        else:
+                            supplier_category = SupplierCategory(buyer=buyer,supplier = supplier_obj)
+                            supplier_category.name = check_string(category,"category")
+                            supplier_category.save()
                 elif field=="remark" and bool(data.get("remark")):
                     supplier_obj.remark = check_string(data.get("remark"),"Remark")
             supplier_obj.save()
-            return Response({"Success":True})
+            return Response({"success":True})
         except Exception as error:
-            return return_400({"Success":False,"error":f"{error}"})
-        
+            return return_400({"success":False,"error":f"{error}"})
+    
+    def delete(self,request):
+        """
+            API DELETE Method
+        """
+        try:
+            data = request.data
+            supplier_id = data.get("supplier_id")
+            if not supplier_id:
+                raise Exception("Supplier ID not provided")
+            buyer = request.user.buyer
+            supplier_obj = buyer.suppliers.filter(id=supplier_id).last()
+            if not supplier_obj:
+                raise Exception("This supplier doesn't exist in your suppliers list!")
+            supplier_obj.delete()
+            return Response({"success":True})
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+class CreateRFQ(APIView):
+    """
+        Create RFQ API With Support of:
+        1. POST => To create RQF
+    """
+    permission_classes = (IsAuthenticated,)
+    @transaction.atomic
+    def post(self,request):
+        """
+            API POST Method
+        """
+        try:
+            data = request.data
+            items = data.get("items")
+            suppliers = data.get("suppliers")
+            terms_and_condition = data.get("terms_and_condition")
+            payment_terms = data.get("payment_terms")
+            shipping_terms = data.get("shipping_terms")
+            buyer = request.user.buyer
+            rfq = RequestForQuotation(buyer=buyer)
+            rfq.save()
+            meta_data = {
+                "terms_conditions" : check_string(terms_and_condition,"terms_and_conditions"),
+                "payment_terms" : check_string(payment_terms,"payment_terms"),
+                "shipping_terms" : check_string(shipping_terms,"shipping_terms")
+            }
+            RequestForQuotationMetaData(**meta_data,request_for_quotation = rfq).save()
+            for item in items:
+                rfq_item = RequestForQuotationItems(request_for_quotation = rfq)
+                rfq_item.product_name = check_string(item.get("product_name"),"item_product_name")
+                rfq_item.quantity = float(item.get("quantity"))
+                rfq_item.uom = check_string(item.get("uom"),"item_uom")
+                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications")
+                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications")
+                rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%Y-%m-%d")
+                rfq_item.save()
+            for supplier in suppliers:
+                sup = buyer.suppliers.filter(id=supplier)
+                if sup.exists():
+                    rfq.suppliers.add(sup.last())
+            return Response({"success":True})  
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+
+class GetMetaData(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To last RFQ metadata
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            last_rfq = buyer.request_for_quotations.last()
+            if last_rfq:
+                last_rfq = last_rfq.request_for_quotation_meta_data.last()
+                data = {
+                    "terms_and_conditions":last_rfq.terms_conditions,
+                    "payment_terms":last_rfq.payment_terms,
+                    "shipping_terms":last_rfq.shipping_terms,
+                }
+                return Response({"success":True,"data":data})
+            raise Exception("No last RFQ metadata found")
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+class GetSuppliers(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To all suppliers associated buyer
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            suppliers = buyer.suppliers.all()
+            data = []
+            for supplier in suppliers:
+                sup_dic = {
+                    "supplier_id":supplier.id,
+                    "company":supplier.company_name,
+                    "person":supplier.person_of_contact,
+                    "phone":supplier.phone_no,
+                    "email":supplier.email,
+                    "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
+                    "remark": supplier.remark
+                }
+                data.append(sup_dic)
+            return Response({"success":True,"data":data})
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+class GetSupplierCategories(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To all suppliers categories associated with buyer
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            if not buyer:
+                raise Exception("This Buyer doesn't exists")
+            categories = buyer.supplier_categories.filter()
+            data = set()
+            for category in categories:
+                data.add(category.name)
+            return Response({"success":True,"data":[{"label":category,"value":category} for category in list(data)]})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
