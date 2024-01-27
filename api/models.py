@@ -9,7 +9,7 @@ class Buyer(models.Model):
     phone_no = models.CharField(max_length = 12, null = True, blank=True)
     company_name = models.CharField(max_length = 255, null = True, blank=True)
     gst_no = models.CharField(max_length = 50, null = True, blank=True)
-    Address = models.CharField(max_length = 255, null = True, blank=True)
+    address = models.CharField(max_length = 255, null = True, blank=True)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
 
