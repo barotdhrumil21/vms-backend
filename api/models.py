@@ -34,14 +34,7 @@ class SupplierCategory(models.Model):
     updated = models.DateTimeField(auto_now = True)
 
 class RequestForQuotation(models.Model):
-    OPEN = 1
-    CLOSE = 2
-    STATUS_CHOICE = (
-        (OPEN, "Open"),
-        (CLOSE, "Close")
-    )
     buyer = models.ForeignKey("api.Buyer",null=True,on_delete=models.SET_NULL,related_name="request_for_quotations")
-    status = models.SmallIntegerField(choices = STATUS_CHOICE, default=OPEN)
     suppliers = models.ManyToManyField(Supplier,related_name="request_for_quotations")
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
@@ -55,10 +48,17 @@ class RequestForQuotationMetaData(models.Model):
     updated = models.DateTimeField(auto_now = True)
     
 class RequestForQuotationItems(models.Model):
+    OPEN = 1
+    CLOSE = 2
+    STATUS_CHOICE = (
+        (OPEN, "Open"),
+        (CLOSE, "Close")
+    )
     request_for_quotation = models.ForeignKey("api.RequestForQuotation",null=True,on_delete=models.SET_NULL,related_name="request_for_quotation_items")
     product_name = models.TextField()
     quantity = models.FloatField()
     uom = models.CharField(max_length=50,null=True, blank=True)
+    status = models.SmallIntegerField(choices = STATUS_CHOICE, default=OPEN)
     specifications = models.TextField(null=True, blank=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
     created = models.DateTimeField(auto_now_add=True)

@@ -6,7 +6,9 @@ from authentication.utils import return_400
 from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory
 from api.helper import check_string
 import json
+from django.db.models import Q
 from datetime import datetime
+from django.core.paginator import Paginator
 from django.db import transaction
 
 class CreateSupplier(APIView):
@@ -164,6 +166,41 @@ class CreateRFQ(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class GetRFQ(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To create RQF
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        """
+            API GET Method
+        """
+        try:
+            buyer = request.user.buyer
+            limit = request.GET.get("limit",10)
+            page = request.GET.get("page",1)
+            search = request.GET.get("q",None)
+            rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer)
+            if search and rfq_item_list.exists():
+                rfq_item_list = rfq_item_list.filter(Q(product_name__icontains=check_string(search,"Search parameter"))|Q(request_for_quotation__id=search if search.isdigit() else None))
+            data = []
+            for item in rfq_item_list:
+                obj_json= {
+                    "rfq_id":item.request_for_quotation.id,
+                    "rfq_item_id": item.id,
+                    "product_name": item.product_name,
+                    "quantity" : item.quantity,
+                    "uom": item.uom,
+                    "status": item.get_status_display(),
+                    "specifications": item.specifications,
+                    "expected_delivery_date": item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
+                    "quotes": 10                        
+                }
+                data.append(obj_json)
+            return Response({"success":True,"data":data})
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
 
 class GetMetaData(APIView):
     """
