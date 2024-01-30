@@ -177,8 +177,6 @@ class GetRFQ(APIView):
         """
         try:
             buyer = request.user.buyer
-            limit = request.GET.get("limit",10)
-            page = request.GET.get("page",1)
             search = request.GET.get("q",None)
             rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer)
             if search and rfq_item_list.exists():
@@ -196,7 +194,7 @@ class GetRFQ(APIView):
                     "status": item.get_status_display(),
                     "specifications": item.specifications,
                     "expected_delivery_date": item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
-                    "quotes": 10                        
+                    "quotes": item.request_for_quotation_item_response.all().count()                       
                 }
                 data.append(obj_json)
             return Response({"success":True,"data":data})
@@ -365,3 +363,73 @@ class CreateRFQResponse(APIView):
             return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
+
+class RFQItemData(APIView):
+    """
+        API to get and update RFQ Item responses
+        1. GET => Get all responses for the RFQ Item from the suppliers
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request,rfq_item_id):
+        """
+            API POST Method
+        """
+        try:
+            buyer = request.user.buyer
+            rfq_item = RequestForQuotationItems.objects.get(id=rfq_item_id)
+            if rfq_item.request_for_quotation.buyer!=buyer:
+                raise Exception("Invalid RFQ Item ID for this buyer")
+            rfq = rfq_item.request_for_quotation
+            meta_data = rfq.request_for_quotation_meta_data.last()
+            data = {
+                "item_id":rfq_item.id,
+                "buyer":{
+                    "quantity":rfq_item.quantity,
+                    "address": buyer.address,
+                    "gst_no": buyer.gst_no,
+                    "company_name": buyer.company_name,
+                    "specification": rfq_item.specifications,
+                    "expected_delivery":rfq_item.expected_delivery_date.strftime("%d %b") if rfq_item.expected_delivery_date else None,
+                    "terms_and_conditions" : meta_data.terms_conditions,
+                    "payment_terms": meta_data.payment_terms,
+                    "shipping_terms": meta_data.shipping_terms
+                },
+                "status": "Closed" if rfq_item.request_for_quotation_item_response.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED).exists() else "Open",
+                "suppliers":[
+                        {
+                            "company_name":response.supplier.company_name,
+                            "price":response.price,
+                            "response_id": response.id,
+                            "quantity":response.quantity,
+                            "delivery_by":response.delivery_date.strftime("%d / %b") if response.delivery_date else None,
+                            "order_status":response.get_order_status_display()
+                        }
+                    for response in rfq_item.request_for_quotation_item_response.all()
+                    ]
+            }
+            return Response({"success":True,"data":data})
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+    
+    def post(self,request,rfq_item_id):
+        """
+            API POST Method
+        """
+        try:
+            buyer = request.user.buyer
+            data = request.data
+            rfq_item = RequestForQuotationItems.objects.get(id=rfq_item_id)
+            if rfq_item.request_for_quotation.buyer!=buyer:
+                raise Exception("Invalid RFQ Item ID for this buyer")
+            if not data.get("response_id"):
+                raise Exception("Response ID not provided!")
+            response = RequestForQuotationItemResponse.objects.get(id=data.get("response_id"))
+            response.order_status = RequestForQuotationItemResponse.ORDER_PLACED
+            response.save()
+            rfq_item.status = RequestForQuotationItems.CLOSE
+            rfq_item.save()
+            return Response({"success":True})
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+

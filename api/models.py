@@ -85,8 +85,8 @@ class RequestForQuotationItemResponse(models.Model):
         placed_response = self.request_for_quotation_item.request_for_quotation_item_response.filter(order_status=self.ORDER_PLACED)
         if placed_response.exists():
             raise Exception("Order already placed for this item")
-        if RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=self.request_for_quotation_item,supplier=self.supplier).exists():
-            raise Exception("Response already submitted for this request")
+        # if RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=self.request_for_quotation_item,supplier=self.supplier).exists():
+        #     raise Exception("Response already submitted for this request")
         super(RequestForQuotationItemResponse,self).save(*args, **kwargs)
     
     

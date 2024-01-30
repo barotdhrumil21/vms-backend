@@ -10,5 +10,7 @@ urlpatterns = [
     path('get-supplier-categories/', views.GetSupplierCategories.as_view(),name="get-supplier-categories"),
     path('get-rfq-response/<int:rfq_id>/<str:supplier_id>/', views.GetRFQResponsePageData.as_view(),name="get-supplier-categories"),
     path('create-rfq-response/', views.CreateRFQResponse.as_view(),name="create-rfq-response"),
+    path('rfq-item-data/<int:rfq_item_id>', views.RFQItemData.as_view(),name="create-rfq-response"),
+    
 
 ]
