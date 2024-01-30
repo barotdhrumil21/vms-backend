@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
 from authentication.utils import return_400
-from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory
+from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
 import json
 from django.db.models import Q
@@ -144,9 +144,9 @@ class CreateRFQ(APIView):
             rfq = RequestForQuotation(buyer=buyer)
             rfq.save()
             meta_data = {
-                "terms_conditions" : check_string(terms_and_condition,"terms_and_conditions"),
-                "payment_terms" : check_string(payment_terms,"payment_terms"),
-                "shipping_terms" : check_string(shipping_terms,"shipping_terms")
+                "terms_conditions" : check_string(terms_and_condition,"terms_and_conditions") if terms_and_condition else None,
+                "payment_terms" : check_string(payment_terms,"payment_terms") if payment_terms else None,
+                "shipping_terms" : check_string(shipping_terms,"shipping_terms") if shipping_terms else None
             }
             RequestForQuotationMetaData(**meta_data,request_for_quotation = rfq).save()
             for item in items:
@@ -154,9 +154,8 @@ class CreateRFQ(APIView):
                 rfq_item.product_name = check_string(item.get("product_name"),"item_product_name")
                 rfq_item.quantity = float(item.get("quantity"))
                 rfq_item.uom = check_string(item.get("uom"),"item_uom")
-                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications")
-                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications")
-                rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%Y-%m-%d")
+                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications") if item.get("specifications") else None
+                rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%d/%m/%Y")
                 rfq_item.save()
             for supplier in suppliers:
                 sup = buyer.suppliers.filter(id=supplier)
@@ -190,8 +189,10 @@ class GetRFQ(APIView):
                     "rfq_id":item.request_for_quotation.id,
                     "rfq_item_id": item.id,
                     "product_name": item.product_name,
-                    "quantity" : item.quantity,
-                    "uom": item.uom,
+                    "quantity" : {
+                            "amount":item.quantity,
+                            "uom": item.uom,
+                        },
                     "status": item.get_status_display(),
                     "specifications": item.specifications,
                     "expected_delivery_date": item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
@@ -202,7 +203,7 @@ class GetRFQ(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
-class GetRFQResponse(APIView):
+class GetRFQResponsePageData(APIView):
     """
         Create RFQ API With Support of:
         1. GET => To get data for RFQ response page
@@ -241,10 +242,12 @@ class GetRFQResponse(APIView):
                 "shipping_terms":metadata.shipping_terms,
                 "items":[
                     {
+                        "item_id": item.id,
                         "product_name":item.product_name,
                         "quantity":item.quantity,
                         "specifications":item.specifications,
                         "uom":item.uom,
+                        "responded": True if RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=item,supplier=supplier).exists() else False,
                         "status":item.get_status_display(),
                         "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
                     }
@@ -321,5 +324,44 @@ class GetSupplierCategories(APIView):
                 data.add(category.name)
             return Response({"success":True,"data":[{"label":category,"value":category} for category in list(data)]})
             
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+class CreateRFQResponse(APIView):
+    """
+        Create RFQ Item Response API With Support of:
+        1. POST => To Create RFQ Item Response
+    """
+    permission_classes = (AllowAny,)
+    def post(self,request):
+        """
+            API POST Method
+        """
+        try:
+            data = request.data
+            rfq = RequestForQuotation.objects.filter(id=data.get("rfq_id"))
+            if rfq.exists():
+                rfq = rfq.last()
+            else:
+                raise Exception("Invalid RFQ id")
+            supplier = rfq.buyer.suppliers.filter(id=data.get("supplier_id"))
+            if supplier.exists():
+                supplier = supplier.last()
+            else:
+                raise Exception("Invalid supplier id")
+            items = data.get("items")
+            if not items:
+                raise Exception("Items not provided")
+            for item in items:
+                rfq_item = rfq.request_for_quotation_items.filter(id=item.get("rfq_item_id"))
+                if not rfq_item.exists():
+                   raise Exception("Invalid RFQ item id!")
+                rfq_item = rfq_item.last()
+                rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
+                rfq_response.quantity = item.get("quantity")
+                rfq_response.price = item.get("price")
+                rfq_response.delivery_date = datetime.strptime(item.get("delivery_date"),"%d/%m/%Y") if item.get("delivery_date") else None
+                rfq_response.save()
+            return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
