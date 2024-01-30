@@ -202,6 +202,60 @@ class GetRFQ(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class GetRFQResponse(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To get data for RFQ response page
+    """
+    permission_classes = (AllowAny,)
+    def get(self,request,rfq_id,supplier_id):
+        """
+            API GET Method
+        """
+        try:
+            rfq = RequestForQuotation.objects.get(id=rfq_id)
+            supplier = rfq.suppliers.filter(id=supplier_id)
+            if not supplier.exists():
+                raise Exception("Invalid Supplier ID")
+            supplier = supplier.last()
+            buyer = rfq.buyer
+            metadata = rfq.request_for_quotation_meta_data.last()
+            data = {
+                "buyer":{
+                    "company_name":buyer.company_name,
+                    "first_name":buyer.user.first_name,
+                    "last_name":buyer.user.last_name,
+                    "gst_no":buyer.gst_no,
+                    "address": buyer.address
+                },
+                "supplier":{
+                    "supplier_id":supplier.id,
+                    "company_name":supplier.company_name,
+                    "person_of_contact":supplier.person_of_contact,
+                    "phone_no":supplier.phone_no,
+                    "email":supplier.email,
+                    "categories": [category.name for category in supplier.categories.filter(active=True)]
+                },
+                "terms_conditions":metadata.terms_conditions,
+                "payment_terms":metadata.payment_terms,
+                "shipping_terms":metadata.shipping_terms,
+                "items":[
+                    {
+                        "product_name":item.product_name,
+                        "quantity":item.quantity,
+                        "specifications":item.specifications,
+                        "uom":item.uom,
+                        "status":item.get_status_display(),
+                        "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
+                    }
+                    for item in rfq.request_for_quotation_items.all()
+                ]
+            }
+            return Response({"success":True,"data":data})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+            
 class GetMetaData(APIView):
     """
         Create RFQ API With Support of:

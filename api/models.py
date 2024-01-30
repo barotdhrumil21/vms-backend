@@ -63,6 +63,14 @@ class RequestForQuotationItems(models.Model):
     expected_delivery_date = models.DateField(null=True, blank=True)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
+
+class RequestForQuotationItemResponse(models.Model):
+    request_for_quotation_item = models.ForeignKey("api.RequestForQuotationItems",null=True,on_delete=models.SET_NULL,related_name="request_for_quotation_item_response")
+    quantity = models.FloatField()
+    price = models.FloatField()
+    delivery_date = models.DateField(null=True, blank=True)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now = True)
     
     
     
