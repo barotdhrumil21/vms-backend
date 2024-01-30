@@ -182,7 +182,7 @@ class GetRFQ(APIView):
             search = request.GET.get("q",None)
             rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer)
             if search and rfq_item_list.exists():
-                rfq_item_list = rfq_item_list.filter(Q(product_name__icontains=check_string(search,"Search parameter"))|Q(request_for_quotation__id=search if search.isdigit() else None))
+                rfq_item_list = rfq_item_list.filter(Q(product_name__icontains=check_string(search,"Search parameter"))|Q(request_for_quotation__id=int(search) if search.isdigit() else None))
             data = []
             for item in rfq_item_list:
                 obj_json= {
