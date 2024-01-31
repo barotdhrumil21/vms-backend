@@ -5,10 +5,8 @@ from django.conf import settings
 from authentication.utils import return_400
 from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
-import json
 from django.db.models import Q
 from datetime import datetime
-from django.core.paginator import Paginator
 from django.db import transaction
 
 class CreateSupplier(APIView):
@@ -355,6 +353,8 @@ class CreateRFQResponse(APIView):
                 if not rfq_item.exists():
                    raise Exception("Invalid RFQ item id!")
                 rfq_item = rfq_item.last()
+                if rfq_item.request_for_quotation_item_response.filter(supplier=supplier).exists():
+                    continue
                 rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
                 rfq_response.quantity = item.get("quantity")
                 rfq_response.price = item.get("price")
