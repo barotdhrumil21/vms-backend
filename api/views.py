@@ -383,6 +383,7 @@ class RFQItemData(APIView):
             meta_data = rfq.request_for_quotation_meta_data.last()
             data = {
                 "item_id":rfq_item.id,
+                "product_name": rfq_item.product_name,
                 "buyer":{
                     "quantity":rfq_item.quantity,
                     "address": buyer.address,
