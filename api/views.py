@@ -400,6 +400,7 @@ class RFQItemData(APIView):
                             "company_name":response.supplier.company_name,
                             "price":response.price,
                             "response_id": response.id,
+                            "uom":rfq_item.uom,
                             "quantity":response.quantity,
                             "delivery_by":response.delivery_date.strftime("%d / %b") if response.delivery_date else None,
                             "order_status":response.get_order_status_display()
