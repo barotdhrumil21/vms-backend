@@ -387,6 +387,7 @@ class RFQItemData(APIView):
                     "quantity":rfq_item.quantity,
                     "address": buyer.address,
                     "gst_no": buyer.gst_no,
+                    "uom":rfq_item.uom,
                     "company_name": buyer.company_name,
                     "specification": rfq_item.specifications,
                     "expected_delivery":rfq_item.expected_delivery_date.strftime("%d %b") if rfq_item.expected_delivery_date else None,
@@ -400,7 +401,6 @@ class RFQItemData(APIView):
                             "company_name":response.supplier.company_name,
                             "price":response.price,
                             "response_id": response.id,
-                            "uom":rfq_item.uom,
                             "quantity":response.quantity,
                             "delivery_by":response.delivery_date.strftime("%d / %b") if response.delivery_date else None,
                             "order_status":response.get_order_status_display()
