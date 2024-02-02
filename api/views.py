@@ -236,20 +236,24 @@ class GetRFQResponsePageData(APIView):
                 "terms_conditions":metadata.terms_conditions,
                 "payment_terms":metadata.payment_terms,
                 "shipping_terms":metadata.shipping_terms,
-                "items":[
-                    {
+                "items":[]
+            }
+            for item in rfq.request_for_quotation_items.all():
+                request_response = RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=item,supplier=supplier)
+                item_obj = {
                         "item_id": item.id,
                         "product_name":item.product_name,
                         "quantity":item.quantity,
                         "specifications":item.specifications,
                         "uom":item.uom,
-                        "responded": True if RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=item,supplier=supplier).exists() else False,
+                        "responded": True if request_response.exists() else False,
+                        "supplier_price": request_response.last().price if request_response.exists() else None,
+                        "supplier_quantity": request_response.last().quantity if request_response.exists() else None,
+                        "supplier_expected_delivery_date": request_response.last().delivery_date.strftime("%d/%b") if request_response.exists() else None,
                         "status":item.get_status_display(),
                         "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
                     }
-                    for item in rfq.request_for_quotation_items.all()
-                ]
-            }
+                data["items"].append(item_obj)
             return Response({"success":True,"data":data})
             
         except Exception as error:
