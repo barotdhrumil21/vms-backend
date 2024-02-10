@@ -8,9 +8,9 @@ urlpatterns = [
     path('get-rfq/', views.GetRFQ.as_view(),name="get-rfq"),
     path('get-rfq-metadata/', views.GetMetaData.as_view(),name="get-rfq-metadata"),
     path('get-supplier-categories/', views.GetSupplierCategories.as_view(),name="get-supplier-categories"),
+    path('get-item-uom/', views.GetRfqUom.as_view(),name="get-item-uom"),
     path('get-rfq-response/<int:rfq_id>/<str:supplier_id>/', views.GetRFQResponsePageData.as_view(),name="get-supplier-categories"),
     path('create-rfq-response/', views.CreateRFQResponse.as_view(),name="create-rfq-response"),
-    path('rfq-item-data/<int:rfq_item_id>', views.RFQItemData.as_view(),name="create-rfq-response"),
-    
-
+    path('rfq-item-data/<int:rfq_item_id>', views.RFQItemData.as_view(),name="rfq-item-data"),
+    path('send-rfq-data-file/', views.GetAllRFQDataEmail.as_view(),name="send-rfq-data-file"),
 ]

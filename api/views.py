@@ -6,8 +6,10 @@ from authentication.utils import return_400
 from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
 from django.db.models import Q
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.db import transaction
+from api.task import CeleryEmailManager
+from django.shortcuts import render
 
 class CreateSupplier(APIView):
     """
@@ -155,10 +157,26 @@ class CreateRFQ(APIView):
                 rfq_item.specifications = check_string(item.get("specifications"),"item_specifications") if item.get("specifications") else None
                 rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%d/%m/%Y")
                 rfq_item.save()
+            email_obj = {
+                "to": [],
+                "cc":[],
+                "subject":f"Request for quotation raised by: {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
+                "items":items,
+                "rfq_id" : rfq.id,
+                "total_no_of_items":len(items)
+            }
             for supplier in suppliers:
                 sup = buyer.suppliers.filter(id=supplier)
                 if sup.exists():
-                    rfq.suppliers.add(sup.last())
+                    sup = sup.last()
+                    rfq.suppliers.add(sup)
+                    email_obj["to"].append(sup.email)
+                    email_obj["url"] = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/{sup.id}"
+                    email_obj["supplier_name"] = sup.company_name
+                    if settings.USE_CELERY:
+                        CeleryEmailManager.send_rfq_created_email.delay(email_obj)
+                    else:
+                        CeleryEmailManager.send_rfq_created_email(email_obj)
             return Response({"success":True})  
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -249,9 +267,9 @@ class GetRFQResponsePageData(APIView):
                         "responded": True if request_response.exists() else False,
                         "supplier_price": request_response.last().price if request_response.exists() else None,
                         "supplier_quantity": request_response.last().quantity if request_response.exists() else None,
-                        "supplier_expected_delivery_date": request_response.last().delivery_date.strftime("%d/%b") if request_response.exists() else None,
+                        "supplier_expected_delivery_date": request_response.last().delivery_date.strftime("%d/%b/%Y") if request_response.exists() else None,
                         "status":item.get_status_display(),
-                        "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
+                        "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b/%Y") if item.expected_delivery_date else None,
                     }
                 data["items"].append(item_obj)
             return Response({"success":True,"data":data})
@@ -290,19 +308,43 @@ class GetSuppliers(APIView):
     def get(self,request):
         try:
             buyer = request.user.buyer
-            suppliers = buyer.suppliers.all()
+            search = request.GET.get("q")
+            gte_date = datetime.now() - timedelta(days=5)
+            rfq_list = RequestForQuotation.objects.filter(created__gte=gte_date, buyer = buyer).order_by('-created')
+            
             data = []
+            supplier_added = {}
+            for rfq in rfq_list:
+                
+                suppliers = rfq.suppliers.all()
+                if search:
+                    suppliers = rfq.suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
+                for supplier in suppliers:
+                    if not supplier_added.get(supplier.id,False):
+                        sup_dic = {
+                            "supplier_id":supplier.id,
+                            "company":supplier.company_name,
+                            "person":supplier.person_of_contact,
+                            "phone":supplier.phone_no,
+                            "email":supplier.email,
+                            "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
+                            "remark": supplier.remark
+                        }
+                        supplier_added[supplier.id] = True
+                        data.append(sup_dic)
             for supplier in suppliers:
-                sup_dic = {
-                    "supplier_id":supplier.id,
-                    "company":supplier.company_name,
-                    "person":supplier.person_of_contact,
-                    "phone":supplier.phone_no,
-                    "email":supplier.email,
-                    "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
-                    "remark": supplier.remark
-                }
-                data.append(sup_dic)
+                if not supplier_added.get(supplier.id,False):
+                    sup_dic = {
+                        "supplier_id":supplier.id,
+                        "company":supplier.company_name,
+                        "person":supplier.person_of_contact,
+                        "phone":supplier.phone_no,
+                        "email":supplier.email,
+                        "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
+                        "remark": supplier.remark
+                    }
+                    supplier_added[supplier.id] = True
+                    data.append(sup_dic)
             return Response({"success":True,"data":data})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -323,6 +365,26 @@ class GetSupplierCategories(APIView):
             for category in categories:
                 data.add(category.name)
             return Response({"success":True,"data":[{"label":category,"value":category} for category in list(data)]})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+class GetRfqUom(APIView):
+    """
+        Create RFQ API With Support of:
+        1. GET => To all suppliers categories associated with buyer
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            if not buyer:
+                raise Exception("This Buyer doesn't exists")
+            uom_dic = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer).values("uom")
+            data = set()
+            for uom in uom_dic:
+                data.add(uom.get("uom"))
+            return Response({"success":True,"data":[{"label":uom,"value":uom} for uom in list(data)]})
             
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -401,18 +463,33 @@ class RFQItemData(APIView):
                     "shipping_terms": meta_data.shipping_terms
                 },
                 "status": "Closed" if rfq_item.request_for_quotation_item_response.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED).exists() else "Open",
-                "suppliers":[
-                        {
-                            "company_name":response.supplier.company_name,
-                            "price":response.price,
-                            "response_id": response.id,
-                            "quantity":response.quantity,
-                            "delivery_by":response.delivery_date.strftime("%d / %b") if response.delivery_date else None,
-                            "order_status":response.get_order_status_display()
-                        }
-                    for response in rfq_item.request_for_quotation_item_response.all()
-                    ]
+                "suppliers":[]
             }
+            for supplier in rfq.suppliers.all():
+                res = rfq_item.request_for_quotation_item_response.filter(supplier=supplier)
+                if res.exists():
+                    res = res.last()
+                    data["suppliers"].insert(0,{
+                        "company_name":supplier.company_name,
+                        "supplier_id": supplier.id,
+                        "price":res.price if res else None,
+                        "response_id": res.id if res else None,
+                        "quantity":res.quantity if res else None,
+                        "delivery_by":res.delivery_date.strftime("%d / %b / %Y") if (res and res.delivery_date) else "-",
+                        "order_status":res.get_order_status_display() if res else None
+                    })
+                    continue
+                else:
+                    res = None
+                    data["suppliers"].append({
+                            "company_name":supplier.company_name,
+                            "supplier_id": supplier.id,
+                            "price":None,
+                            "response_id": None,
+                            "quantity":None,
+                            "delivery_by": "-",
+                            "order_status": None
+                        })
             return Response({"success":True,"data":data})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -438,4 +515,85 @@ class RFQItemData(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class GetAllRFQDataEmail(APIView):
+    """
+        Get the all the rfq and create an csv of the same
+        1. GET
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            if settings.USE_CELERY:
+                CeleryEmailManager.send_all_rfq_email.delay(buyer.id)
+            else:
+                CeleryEmailManager.send_all_rfq_email(buyer.id)
+            return Response({"success":True})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+def TestEmail(request):
+    obj={
+        'items': [
+            {'product_name': 
+             'Test product 1', 
+             'quantity': 1, 
+             'uom': 'Boxes', 
+             'specification': '', 
+             'expected_delivery_date': '15/02/2024', 
+             'specifications': 'Specs 1'
+            }, 
+            {'product_name': 'Test Product 2', 
+             'quantity': 2, 
+             'uom': 'Pack', 
+             'specifications': 'Specs 2', 
+             'expected_delivery_date': '16/02/2024'
+            }], 
+        'rfq_id': 19, 
+        'total_no_of_items': 2, 
+        'url': 'http://localhost:3000/rfq-response/19/11bd8451-163f-47c8-b380-c904eac3a234',
+        'supplier_name':"Sunrise Stock",
+        }
+    rfq_lists = RequestForQuotation.objects.all()
+    data = []
+    for rfq in rfq_lists:
+        for supplier in rfq.suppliers.all():
+            categories = supplier.categories.filter(active=True)
+            categories = [category.name for category in categories]
+            print(categories)
+            for item in rfq.request_for_quotation_items.all():
+                res = item.request_for_quotation_item_response.filter(supplier=supplier)
+                if res.exists():
+                    res = res.last()
+                else:
+                    res = None
+                obj = {
+                    "RFQ Item Id" : rfq.id,
+                    "Date-Time" : rfq.created.strftime("%d-%b-%Y"),
+                    "Terms & Conditions" : rfq.request_for_quotation_meta_data.last().payment_terms,
+                    "Payment Terms" : rfq.request_for_quotation_meta_data.last().terms_conditions,
+                    "Shipping Terms" : rfq.request_for_quotation_meta_data.last().shipping_terms,
+                    "Product Name" : item.product_name,
+                    "Quantity":item.quantity,
+                    "UOM" : item.uom,
+                    "Specification" : item.specifications,
+                    "Expected Delivery" : item.expected_delivery_date.strftime("%d-%b-%Y") if item.expected_delivery_date else None,
+                    "RFQ Status" : "",
+                    "Supplier Name" : supplier.company_name,
+                    "Supplier POC" : supplier.person_of_contact,
+                    "Supplier Phone" : supplier.phone_no,
+                    "Supplier Email" : supplier.email,
+                    "Supplier Categories" : "|".join(categories) if categories else "",
+                    "Supplier Price" : res.price if res else None,
+                    "Supplier Quantity" : res.quantity if res else None,
+                    "Lead Time" : res.delivery_date.strftime("%d-%b-%Y") if (res and res.delivery_date) else None,
+                    "Quote Received On" : res.created.strftime("%d-%b-%Y") if res else None,
+                    "Order Status" : res.get_order_status_display() if res else None,
+                    "Order Placed On" : res.updated.strftime("%d-%b-%Y") if (res and res.order_status==1)  else None,
+                }
+                data.append(obj)
+    print(data,len(data))
+    return render(request,"email/RFQ_Created_Email_Template.html",obj)
+        
 
