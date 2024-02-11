@@ -309,13 +309,13 @@ class GetSuppliers(APIView):
         try:
             buyer = request.user.buyer
             search = request.GET.get("q")
+            suppliers = buyer.suppliers.all()
             gte_date = datetime.now() - timedelta(days=5)
             rfq_list = RequestForQuotation.objects.filter(created__gte=gte_date, buyer = buyer).order_by('-created')
             
             data = []
             supplier_added = {}
             for rfq in rfq_list:
-                
                 suppliers = rfq.suppliers.all()
                 if search:
                     suppliers = rfq.suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
