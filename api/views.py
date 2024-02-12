@@ -533,6 +533,44 @@ class GetAllRFQDataEmail(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class GetSuppliersStatsData(APIView):
+    """
+        Get the all the rfq and create an csv of the same
+        1. GET
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            suppliers_list = buyer.suppliers.all()
+            data = []
+            for supplier in suppliers_list:
+                quotes_requested = supplier.request_for_quotations.all()
+                quotes_received = supplier.request_for_quotation_responses.all()
+                order_placed = quotes_received.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED)
+                quotes_value = 0
+                total_order_value = 0
+                for quotes_rec in quotes_received:
+                    quotes_value = quotes_value + (quotes_rec.quantity*quotes_rec.price if (quotes_rec.quantity and quotes_rec.price) else None)
+                    if quotes_rec.order_status==RequestForQuotationItemResponse.ORDER_PLACED:
+                        total_order_value = total_order_value + (quotes_rec.quantity*quotes_rec.price if (quotes_rec.quantity and quotes_rec.price) else None)    
+                data.append({
+                    "supplier_id":supplier.id,
+                    "company_name":supplier.company_name,
+                    "quotes_requested":quotes_requested.count(),
+                    "quotes_received":quotes_received.count(),
+                    "quotes_value":quotes_value,
+                    "order_placed":order_placed.count(),
+                    "total_order_value":total_order_value,
+                    "success_percent":f"{round(((order_placed.count()/quotes_received.count())*100),2) if quotes_received.count() else 0.00}%",
+                    "contribution_percent":f"{round(((quotes_requested.count()/buyer.request_for_quotations.all().count())*100),2) if buyer.request_for_quotations.all().count() else 0.00}%"
+                })
+            return Response({"success":True, "data":data})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
+
 def TestEmail(request):
     obj={
         'items': [

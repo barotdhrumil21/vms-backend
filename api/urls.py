@@ -13,4 +13,5 @@ urlpatterns = [
     path('create-rfq-response/', views.CreateRFQResponse.as_view(),name="create-rfq-response"),
     path('rfq-item-data/<int:rfq_item_id>', views.RFQItemData.as_view(),name="rfq-item-data"),
     path('send-rfq-data-file/', views.GetAllRFQDataEmail.as_view(),name="send-rfq-data-file"),
+    path('get-supplier-stats-data/', views.GetSuppliersStatsData.as_view(),name="get-supplier-stats-data"),
 ]
