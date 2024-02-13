@@ -5,11 +5,12 @@ from django.conf import settings
 from authentication.utils import return_400
 from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
-from django.db.models import Q
+from django.db.models import Q,F,Sum
 from datetime import datetime, timedelta
 from django.db import transaction
 from api.task import CeleryEmailManager
 from django.shortcuts import render
+from django.core.paginator import Paginator
 
 class CreateSupplier(APIView):
     """
@@ -194,11 +195,16 @@ class GetRFQ(APIView):
         try:
             buyer = request.user.buyer
             search = request.GET.get("q",None)
-            rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer)
+            page = request.GET.get("page",1)
+            limit = request.GET.get("limit",10)
+            rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer).order_by("-created")
             if search and rfq_item_list.exists():
                 rfq_item_list = rfq_item_list.filter(Q(product_name__icontains=check_string(search,"Search parameter"))|Q(request_for_quotation__id=int(search) if search.isdigit() else None))
             data = []
-            for item in rfq_item_list:
+            pagination = Paginator(rfq_item_list,limit)
+            rfq_item_list = pagination.page(page)
+            max_page = pagination.page_range[-1]
+            for item in rfq_item_list.object_list:
                 obj_json= {
                     "rfq_id":item.request_for_quotation.id,
                     "rfq_item_id": item.id,
@@ -213,7 +219,7 @@ class GetRFQ(APIView):
                     "quotes": item.request_for_quotation_item_response.all().count()                       
                 }
                 data.append(obj_json)
-            return Response({"success":True,"data":data})
+            return Response({"success":True,"data":data,"pagination":{"max_page":max_page,"page_number":page}})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -414,18 +420,37 @@ class CreateRFQResponse(APIView):
             items = data.get("items")
             if not items:
                 raise Exception("Items not provided")
-            for item in items:
+            body = []
+            for index,item in enumerate(items):
                 rfq_item = rfq.request_for_quotation_items.filter(id=item.get("rfq_item_id"))
                 if not rfq_item.exists():
                    raise Exception("Invalid RFQ item id!")
                 rfq_item = rfq_item.last()
                 if rfq_item.request_for_quotation_item_response.filter(supplier=supplier).exists():
                     continue
+                body.append(f"{index+1}.{rfq_item.product_name}({item.get('quantity')} {rfq_item.uom})\tPrice : ₹{item.get('price')} \t Expected Date : {item.get('delivery_date')}\n")
                 rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
                 rfq_response.quantity = item.get("quantity")
                 rfq_response.price = item.get("price")
                 rfq_response.delivery_date = datetime.strptime(item.get("delivery_date"),"%d/%m/%Y") if item.get("delivery_date") else None
                 rfq_response.save()
+            email_obj = {
+                "to" : [supplier.buyer.user.email],
+                "cc" : [supplier.email],
+                "subject": "New quotation received",
+                "body":f'''
+                Dear sir/ma’am,
+                You have received new quotation from {supplier.company_name} for following products:
+                
+                {'                '.join(body)}
+                
+                Thank you
+                '''
+            }
+            if settings.USE_CELERY:
+                CeleryEmailManager.send_email_with_body.delay(email_obj)
+            else:
+                CeleryEmailManager.send_email_with_body(email_obj)
             return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -511,6 +536,28 @@ class RFQItemData(APIView):
             response.save()
             rfq_item.status = RequestForQuotationItems.CLOSE
             rfq_item.save()
+            email_obj = {
+                "to" : [response.supplier.email],
+                "cc" : [buyer.user.email],
+                "subject": f"PO from {buyer.company_name}",
+                "body":f'''
+                Dear sir/ma’am,
+                Congratulations! You have received a new order. The details are as mentioned below.
+                Please acknowledge the email to confirm the order.
+                
+                Product Name      : {rfq_item.product_name}
+                Price             : ₹{response.price}
+                Quantity          : {response.quantity} {rfq_item.uom}
+                Delivery Date     : {response.delivery_date.strftime("%d / %b / %Y") if response.delivery_date else ''}
+
+                Thank you,
+                {buyer.company_name}
+                '''
+            }
+            if settings.USE_CELERY:
+                CeleryEmailManager.send_email_with_body.delay(email_obj)
+            else:
+                CeleryEmailManager.send_email_with_body(email_obj)
             return Response({"success":True})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -544,27 +591,31 @@ class GetSuppliersStatsData(APIView):
             buyer = request.user.buyer
             suppliers_list = buyer.suppliers.all()
             data = []
+            total_suppliers_order_value = 0
             for supplier in suppliers_list:
                 quotes_requested = supplier.request_for_quotations.all()
                 quotes_received = supplier.request_for_quotation_responses.all()
                 order_placed = quotes_received.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED)
-                quotes_value = 0
-                total_order_value = 0
-                for quotes_rec in quotes_received:
-                    quotes_value = quotes_value + (quotes_rec.quantity*quotes_rec.price if (quotes_rec.quantity and quotes_rec.price) else None)
-                    if quotes_rec.order_status==RequestForQuotationItemResponse.ORDER_PLACED:
-                        total_order_value = total_order_value + (quotes_rec.quantity*quotes_rec.price if (quotes_rec.quantity and quotes_rec.price) else None)    
+                quotes_value = supplier.request_for_quotation_responses.aggregate(total=Sum(F('price') * F('quantity')))['total']
+                total_order_value = supplier.request_for_quotation_responses.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED).aggregate(total=Sum(F('price') * F('quantity')))['total']
+                if total_order_value:
+                    total_suppliers_order_value = total_suppliers_order_value + total_order_value
                 data.append({
                     "supplier_id":supplier.id,
                     "company_name":supplier.company_name,
                     "quotes_requested":quotes_requested.count(),
                     "quotes_received":quotes_received.count(),
-                    "quotes_value":quotes_value,
+                    "quotes_value":quotes_value if quotes_value else "--",
                     "order_placed":order_placed.count(),
-                    "total_order_value":total_order_value,
+                    "total_order_value":total_order_value if total_order_value else 0.00,
                     "success_percent":f"{round(((order_placed.count()/quotes_received.count())*100),2) if quotes_received.count() else 0.00}%",
-                    "contribution_percent":f"{round(((quotes_requested.count()/buyer.request_for_quotations.all().count())*100),2) if buyer.request_for_quotations.all().count() else 0.00}%"
                 })
+            if total_suppliers_order_value>0:
+                for d in data:
+                    if d['total_order_value']:
+                        d["contribution_percent"] = f"{round((d['total_order_value']/total_suppliers_order_value),2)*100}%"
+                    else:
+                        d["contribution_percent"] = "--"
             return Response({"success":True, "data":data})
             
         except Exception as error:

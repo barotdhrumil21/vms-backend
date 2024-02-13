@@ -11,5 +11,9 @@ class CeleryEmailManager:
     @app.task(queue="email_queue")
     def send_all_rfq_email(buyer_id):
         EmailManager.send_all_rfq_email(buyer_id)
+    
+    @app.task(queue="email_queue")
+    def send_email_with_body(email_obj):
+        EmailManager.send_email_with_body(email_obj)
         
         

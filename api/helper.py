@@ -26,7 +26,7 @@ def get_all_rfq_data(buyer):
                     res = None
                 obj = {
                     "RFQ Item Id" : rfq.id,
-                    "Date-Time" : rfq.created.strftime("%d-%b-%Y"),
+                    "Date" : rfq.created.strftime("%d-%b-%Y"),
                     "Terms & Conditions" : rfq.request_for_quotation_meta_data.last().payment_terms,
                     "Payment Terms" : rfq.request_for_quotation_meta_data.last().terms_conditions,
                     "Shipping Terms" : rfq.request_for_quotation_meta_data.last().shipping_terms,
@@ -35,12 +35,12 @@ def get_all_rfq_data(buyer):
                     "UOM" : item.uom,
                     "Specification" : item.specifications,
                     "Expected Delivery" : item.expected_delivery_date.strftime("%d-%b-%Y") if item.expected_delivery_date else None,
-                    "RFQ Status" : "",
+                    "RFQ Status" :  item.get_status_display(),
                     "Supplier Name" : supplier.company_name,
                     "Supplier POC" : supplier.person_of_contact,
                     "Supplier Phone" : supplier.phone_no,
                     "Supplier Email" : supplier.email,
-                    "Supplier Categories" : "|".join(categories) if categories else "",
+                    "Supplier Categories" : " , ".join(categories) if categories else "",
                     "Supplier Price" : res.price if res else None,
                     "Supplier Quantity" : res.quantity if res else None,
                     "Lead Time" : res.delivery_date.strftime("%d-%b-%Y") if (res and res.delivery_date) else None,
@@ -76,6 +76,16 @@ class EmailManager:
             message = EmailMultiAlternatives(subject="Request For Quotation File Available", body="Please find the below attached excel sheet.", 
             from_email=from_email, to=[buyer.user.email], cc=settings.DEFAULT_EMAIL_CC_LIST)
             message.attach_file(f"{settings.BASE_DIR}/{file_name}")
+            if settings.SEND_EMAILS:
+                message.send()
+        except Exception as ex:
+            print("***** ERROR : ",ex)
+    
+    def send_email_with_body(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            message = EmailMultiAlternatives(subject=email_obj.get("subject"), body=email_obj.get("body"), 
+            from_email=from_email, to=email_obj.get("to",[]), cc=email_obj.get("cc",[]) + settings.DEFAULT_EMAIL_CC_LIST)
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
