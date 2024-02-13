@@ -324,8 +324,8 @@ class GetSuppliers(APIView):
             for rfq in rfq_list:
                 suppliers = rfq.suppliers.all()
                 if search:
-                    suppliers = rfq.suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
-                for supplier in suppliers:
+                    suppliers_rfq = rfq.suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
+                for supplier in suppliers_rfq:
                     if not supplier_added.get(supplier.id,False):
                         sup_dic = {
                             "supplier_id":supplier.id,
