@@ -166,6 +166,7 @@ EMAIL_HOST_USER = "vmsdevmaster@gmail.com"
 EMAIL_HOST_PASSWORD = ""
 DEFAULT_FROM_EMAIL='VMS Support'
 DEFAULT_EMAIL_CC_LIST = []
+DEFAULT_EMAIL_BCC_LIST = [""]
 SEND_EMAILS = True
 
 # Media Folder Setting

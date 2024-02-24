@@ -9,6 +9,7 @@ from django.db.models import Q,F,Sum
 from datetime import datetime, timedelta
 from django.db import transaction
 from api.task import CeleryEmailManager
+from .helper import EmailManager
 from django.shortcuts import render
 from django.core.paginator import Paginator
 
@@ -161,6 +162,7 @@ class CreateRFQ(APIView):
             email_obj = {
                 "to": [],
                 "cc":[],
+                "bcc":[],
                 "subject":f"Request for quotation raised by: {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
                 "items":items,
                 "rfq_id" : rfq.id,
@@ -174,10 +176,11 @@ class CreateRFQ(APIView):
                     email_obj["to"].append(sup.email)
                     email_obj["url"] = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/{sup.id}"
                     email_obj["supplier_name"] = sup.company_name
+                    email_obj["company_name"] = rfq.buyer.company_name
                     if settings.USE_CELERY:
                         CeleryEmailManager.send_rfq_created_email.delay(email_obj)
                     else:
-                        CeleryEmailManager.send_rfq_created_email(email_obj)
+                        EmailManager.send_rfq_created_email(email_obj)
             return Response({"success":True})  
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -397,6 +400,24 @@ class GetRfqUom(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class GetRfqProduct(APIView):
+    """
+    """
+    permission_classes = (IsAuthenticated,)
+    def get(self,request):
+        try:
+            buyer = request.user.buyer
+            if not buyer:
+                raise Exception("This Buyer doesn't exists")
+            product_dic = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer).values("product_name")
+            data = set()
+            for product in product_dic:
+                data.add(product.get("product_name"))
+            return Response({"success":True,"data":[{"label":uom,"value":uom} for uom in list(data)]})
+            
+        except Exception as error:
+            return return_400({"success":False,"error":f"{error}"})
+
 class CreateRFQResponse(APIView):
     """
         Create RFQ Item Response API With Support of:
@@ -452,7 +473,7 @@ class CreateRFQResponse(APIView):
             if settings.USE_CELERY:
                 CeleryEmailManager.send_email_with_body.delay(email_obj)
             else:
-                CeleryEmailManager.send_email_with_body(email_obj)
+                EmailManager.send_email_with_body(email_obj)
             return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -559,7 +580,7 @@ class RFQItemData(APIView):
             if settings.USE_CELERY:
                 CeleryEmailManager.send_email_with_body.delay(email_obj)
             else:
-                CeleryEmailManager.send_email_with_body(email_obj)
+                EmailManager.send_email_with_body(email_obj)
             return Response({"success":True})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -576,7 +597,7 @@ class GetAllRFQDataEmail(APIView):
             if settings.USE_CELERY:
                 CeleryEmailManager.send_all_rfq_email.delay(buyer.id)
             else:
-                CeleryEmailManager.send_all_rfq_email(buyer.id)
+                EmailManager.send_all_rfq_email(buyer.id)
             return Response({"success":True})
             
         except Exception as error:

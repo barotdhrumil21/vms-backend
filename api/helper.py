@@ -56,7 +56,8 @@ class EmailManager:
         try:
             from_email = settings.EMAIL_HOST_USER
             message = EmailMultiAlternatives(subject=email_obj.get("subject",""), body=email_obj.get("body",""), 
-            from_email=from_email, to=email_obj['to'], cc=email_obj.get('cc',[]) + settings.DEFAULT_EMAIL_CC_LIST)
+            from_email=from_email, to=email_obj['to'], bcc=email_obj.get('bcc',[]) + 
+                settings.DEFAULT_EMAIL_BCC_LIST,cc=email_obj.get('cc',[]) + settings.DEFAULT_EMAIL_CC_LIST)
             html_template = get_template(os.path.join(settings.BASE_DIR, 'templates/email/') +'RFQ_Created_Email_Template.html').render(email_obj)
             message.content_subtype = 'html'
             message.attach_alternative(html_template, "text/html")
@@ -74,7 +75,7 @@ class EmailManager:
             dataFrame.to_excel(file_name,index=False)
             from_email = settings.EMAIL_HOST_USER
             message = EmailMultiAlternatives(subject="Request For Quotation File Available", body="Please find the below attached excel sheet.", 
-            from_email=from_email, to=[buyer.user.email], cc=settings.DEFAULT_EMAIL_CC_LIST)
+            from_email=from_email, to=[buyer.user.email], bcc=settings.DEFAULT_EMAIL_BCC_LIST)
             message.attach_file(f"{settings.BASE_DIR}/{file_name}")
             if settings.SEND_EMAILS:
                 message.send()
@@ -85,7 +86,7 @@ class EmailManager:
         try:
             from_email = settings.EMAIL_HOST_USER
             message = EmailMultiAlternatives(subject=email_obj.get("subject"), body=email_obj.get("body"), 
-            from_email=from_email, to=email_obj.get("to",[]), cc=email_obj.get("cc",[]) + settings.DEFAULT_EMAIL_CC_LIST)
+            from_email=from_email, to=email_obj.get("to",[]), cc=email_obj.get("cc",[]), bcc = settings.DEFAULT_EMAIL_BCC_LIST)
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
