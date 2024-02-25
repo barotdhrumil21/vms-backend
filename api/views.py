@@ -276,7 +276,8 @@ class GetRFQResponsePageData(APIView):
                         "responded": True if request_response.exists() else False,
                         "supplier_price": request_response.last().price if request_response.exists() else None,
                         "supplier_quantity": request_response.last().quantity if request_response.exists() else None,
-                        "supplier_expected_delivery_date": request_response.last().delivery_date.strftime("%d/%b/%Y") if request_response.exists() else None,
+                        "supplier_lead_time": request_response.last().lead_time if request_response.exists() else None,
+                        "supplier_remarks": request_response.last().remarks if request_response.exists() else None,
                         "status":item.get_status_display(),
                         "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b/%Y") if item.expected_delivery_date else None,
                     }
@@ -451,11 +452,12 @@ class CreateRFQResponse(APIView):
                 rfq_item = rfq_item.last()
                 if rfq_item.request_for_quotation_item_response.filter(supplier=supplier).exists():
                     continue
-                body.append(f"{index+1}.{rfq_item.product_name}({item.get('quantity')} {rfq_item.uom})\tPrice : ₹{item.get('price')} \t Expected Date : {item.get('delivery_date')}\n")
+                body.append(f"{index+1}.{rfq_item.product_name}({item.get('quantity')} {rfq_item.uom})\tPrice : ₹{item.get('price')} \t Lead Time : {item.get('supplier_lead_time')}\t Remarks : {item.get('supplier_remarks')}\n")
                 rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
                 rfq_response.quantity = item.get("quantity")
                 rfq_response.price = item.get("price")
-                rfq_response.delivery_date = datetime.strptime(item.get("delivery_date"),"%d/%m/%Y") if item.get("delivery_date") else None
+                rfq_response.lead_time = item.get("supplier_lead_time")
+                rfq_response.remarks = item.get("supplier_remarks")
                 rfq_response.save()
             email_obj = {
                 "to" : [supplier.buyer.user.email],
@@ -523,7 +525,8 @@ class RFQItemData(APIView):
                         "price":res.price if res else None,
                         "response_id": res.id if res else None,
                         "quantity":res.quantity if res else None,
-                        "delivery_by":res.delivery_date.strftime("%d / %b / %Y") if (res and res.delivery_date) else "-",
+                        "supplier_lead_time":res.lead_time if res else None,
+                        "supplier_remarks":res.remarks if res else None,
                         "order_status":res.get_order_status_display() if res else None
                     })
                     continue
@@ -535,7 +538,8 @@ class RFQItemData(APIView):
                             "price":None,
                             "response_id": None,
                             "quantity":None,
-                            "delivery_by": "-",
+                            "supplier_lead_time":res.lead_time if res else None,
+                            "supplier_remarks":res.remarks if res else None,
                             "order_status": None
                         })
             return Response({"success":True,"data":data})
@@ -571,7 +575,7 @@ class RFQItemData(APIView):
                 Product Name      : {rfq_item.product_name}
                 Price             : ₹{response.price}
                 Quantity          : {response.quantity} {rfq_item.uom}
-                Delivery Date     : {response.delivery_date.strftime("%d / %b / %Y") if response.delivery_date else ''}
+                Expected Lead Time     : {response.lead_time if response.lead_time else ''}
 
                 Thank you,
                 {buyer.company_name}

@@ -78,6 +78,8 @@ class RequestForQuotationItemResponse(models.Model):
     supplier = models.ForeignKey(Supplier,null=True, on_delete=models.SET_NULL,related_name="request_for_quotation_responses") 
     order_status = models.SmallIntegerField(choices = ORDER_STATUS, default=ORDER_PENDING)
     delivery_date = models.DateField(null=True, blank=True)
+    lead_time = models.IntegerField(null=True, blank=True)
+    remarks = models.CharField(max_length=200,null=True, blank=True)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
     
@@ -85,8 +87,6 @@ class RequestForQuotationItemResponse(models.Model):
         placed_response = self.request_for_quotation_item.request_for_quotation_item_response.filter(order_status=self.ORDER_PLACED)
         if placed_response.exists():
             raise Exception("Order already placed for this item")
-        # if RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=self.request_for_quotation_item,supplier=self.supplier).exists():
-        #     raise Exception("Response already submitted for this request")
         super(RequestForQuotationItemResponse,self).save(*args, **kwargs)
     
     
