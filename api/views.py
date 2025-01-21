@@ -1,9 +1,13 @@
+import random
+import string
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
 from authentication.utils import return_400
-from api.models import Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
+from django.contrib.auth.models import User
+
+from api.models import Buyer, Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
 from django.db.models import Q,F,Sum
 from datetime import datetime, timedelta
@@ -123,6 +127,59 @@ class CreateSupplier(APIView):
             return Response({"success":True})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
+
+class CreateUser(APIView):
+    """
+        Create New Signup
+    """
+    def post(self,request):
+        try:
+            data = request.data
+            event = data.get("meta").get("event_name")
+            if event == "subscription_updated":
+                
+                email = data.get("data").get("attributes").get("user_email")
+                # user_name = data.get("data").get("attributes").get("user_name")
+                renews_at = datetime.fromisoformat(data.get("data").get("attributes").get("renews_at").replace("Z", "+00:00"))
+                test_mode = True if data.get("meta").get("test_mode") == "true" else False
+                if not User.objects.filter(username=email).exists():
+                    password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                    user = User.objects.create_user(username=email, email=email, password=password)
+                    Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode)
+
+                    email_obj = {
+                        "to": [email],
+                        "cc":[],
+                        "bcc":["barotdhrumil21@gmail.com"],
+                        "subject":f"Credentials for AuraVMS Login",
+                        "username":email,
+                        "password":password
+                    }
+                    if settings.USE_CELERY:
+                        CeleryEmailManager.new_user_signup.delay(email_obj)
+                    else:
+                        EmailManager.new_user_signup(email_obj)
+                else:
+                    buyer = Buyer.objects.get(user=User.objects.get(username=email))
+                    buyer.subscription_expiry_date = renews_at
+                    buyer.save()
+            return Response({"success":True})  
+        except Exception as error:
+            print(error)
+            email_obj = {
+                        "to": ["barotdhrumil21@gmail.com"],
+                        "cc":[],
+                        "bcc":[""],
+                        "subject":f"[ALERT] USER CREATION FAILED",
+                        "username":email,
+                        "error":error
+                    }
+            if settings.USE_CELERY:
+                CeleryEmailManager.user_create_failed.delay(email_obj)
+            else:
+                EmailManager.user_create_failed(email_obj)  
+            return Response({"success":False}) 
+        
 
 class CreateRFQ(APIView):
     """

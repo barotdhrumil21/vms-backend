@@ -15,5 +15,13 @@ class CeleryEmailManager:
     @app.task(queue="email_queue")
     def send_email_with_body(email_obj):
         EmailManager.send_email_with_body(email_obj)
+    
+    @app.task(queue="email_queue")
+    def new_user_signup(email_obj):
+        EmailManager.new_user_signup(email_obj)
+    
+    @app.task(queue="email_queue")
+    def user_create_failed(email_obj):
+        EmailManager.user_create_failed(email_obj)
         
         

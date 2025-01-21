@@ -67,6 +67,34 @@ class EmailManager:
         except Exception as ex:
             print("***** ERROR : ",ex)
     
+    def new_user_signup(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            message = EmailMultiAlternatives(subject=email_obj.get("subject",""), body=email_obj.get("body",""), 
+            from_email=from_email, to=email_obj['to'], bcc=email_obj.get('bcc',[]) + 
+                settings.DEFAULT_EMAIL_BCC_LIST,cc=email_obj.get('cc',[]) + settings.DEFAULT_EMAIL_CC_LIST)
+            html_template = get_template(os.path.join(settings.BASE_DIR, 'templates/email/') +'new_user_signup.html').render(email_obj)
+            message.content_subtype = 'html'
+            message.attach_alternative(html_template, "text/html")
+            if settings.SEND_EMAILS:
+                message.send()
+        except Exception as ex:
+            print("***** ERROR : ",ex)
+    
+    def user_create_failed(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            message = EmailMultiAlternatives(subject=email_obj.get("subject",""), body=email_obj.get("body",""), 
+            from_email=from_email, to=email_obj['to'], bcc=email_obj.get('bcc',[]) + 
+                settings.DEFAULT_EMAIL_BCC_LIST,cc=email_obj.get('cc',[]) + settings.DEFAULT_EMAIL_CC_LIST)
+            html_template = get_template(os.path.join(settings.BASE_DIR, 'templates/email/') +'user_create_failed.html').render(email_obj)
+            message.content_subtype = 'html'
+            message.attach_alternative(html_template, "text/html")
+            if settings.SEND_EMAILS:
+                message.send()
+        except Exception as ex:
+            print("***** ERROR : ",ex)
+    
     def send_all_rfq_email(buyer_id):
         try:
             buyer = Buyer.objects.get(id=buyer_id)

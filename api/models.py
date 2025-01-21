@@ -3,16 +3,16 @@ from django.contrib.auth.models import User
 import uuid
 
 # Create your models here.
-
 class Buyer(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='buyer')
+    subscription_expiry_date = models.DateTimeField(auto_now_add=False)
     phone_no = models.CharField(max_length = 12, null = True, blank=True)
     company_name = models.CharField(max_length = 255, null = True, blank=True)
     gst_no = models.CharField(max_length = 50, null = True, blank=True)
     address = models.CharField(max_length = 255, null = True, blank=True)
+    test_user = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
-
 
 class Supplier(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

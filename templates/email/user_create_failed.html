@@ -1,0 +1,107 @@
+{% load static %}
+<body >
+  <div style="display: grid; ">
+    <table
+      class="top-content"
+      style="padding: 40px 0; border-bottom: solid 1px #00000033; min-width: 50%; width: fit-content; margin: auto;"
+    >
+      <tr style="text-align: center">
+        <th
+          style="
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 48px;
+            line-height: 58.09px;
+          "
+        >
+        AuraVMS Admin
+        </th>
+      </tr>
+      <tr style="text-align: center">
+        <td
+          style="
+            font-family: 'Lato', sans-serif;
+            font-weight: 400;
+            font-size: 16px;
+            padding-top: 22px;
+            line-height: 24px;
+          "
+        >
+          Hello! <br /> User creation failed for the following user
+          <br />Username: {{username}}
+          <br />
+          <br />error: {{error}}
+        </td>
+      </tr>
+    </table>
+
+  </table>
+  <table class="footer-content" style="text-align: center; padding-top: 76px">
+    <tr>
+      <td>
+        <div class="main">
+          <p
+            style="
+              font-family: Lato;
+              font-size: 16px;
+              font-weight: 400;
+              line-height: 24px;
+              letter-spacing: 0em;
+              margin: 0;
+              color: #333333;
+            "
+          >
+            Powered By VMS
+          </p>
+          <div
+            class="icons"
+            style="
+              padding: 16px;
+              display: grid;
+              grid-template-columns: auto auto auto;
+              width: fit-content;
+              gap: 24px;
+              margin: auto;
+            "
+          >
+            <img
+              alt="twitter"
+              src="./images/twitter.svg"
+              height="24"
+              width="24"
+            />
+            <img
+              alt="facebook"
+              src="./images/facebook.svg"
+              height="24"
+              width="24"
+            /><img
+              alt="linkedin"
+              src="./images/linkedin.svg"
+              height="24"
+              width="24"
+            />
+          </div>
+          <p
+            class="copyright"
+            style="
+              font-family: Inter;
+              font-size: 12px;
+              font-weight: 400;
+              line-height: 16px;
+              letter-spacing: 0em;
+              margin: 0;
+              color: #00000080;
+              text-align: center;
+            "
+          >
+            Copyright © 2025 AuraVMS<br />
+            A better company begins with a personalised vendor management
+            experience.
+          </p>
+        </div>
+      </td>
+    </tr>
+  </table>
+</div>
+</body>
