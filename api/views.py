@@ -235,7 +235,7 @@ class CreateRFQ(APIView):
                 if sup.exists():
                     sup = sup.last()
                     rfq.suppliers.add(sup)
-                    email_obj["to"].append(sup.email)
+                    email_obj["to"] = sup.email
                     email_obj["url"] = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/{sup.id}"
                     email_obj["supplier_name"] = sup.company_name
                     email_obj["company_name"] = rfq.buyer.company_name
