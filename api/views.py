@@ -6,10 +6,15 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.conf import settings
 from authentication.utils import return_400
 from django.contrib.auth.models import User
+import pandas as pd
+import io, os
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import TemporaryUploadedFile
 
 from api.models import Buyer, Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
-from django.db.models import Q,F,Sum
+from django.db.models import Q,F,Sum, Count
 from datetime import datetime, timedelta
 from django.db import transaction
 from api.task import CeleryEmailManager
@@ -138,7 +143,7 @@ class CreateUser(APIView):
             event = data.get("meta").get("event_name")
             if event == "subscription_updated":
                 
-                email = data.get("data").get("attributes").get("user_email")
+                email = data.get("data").get("attributes").get("user_email").lower()
                 # user_name = data.get("data").get("attributes").get("user_name")
                 renews_at = datetime.fromisoformat(data.get("data").get("attributes").get("renews_at").replace("Z", "+00:00"))
                 test_mode = True if data.get("meta").get("test_mode") == "true" else False
@@ -254,34 +259,67 @@ class GetRFQ(APIView):
         """
         try:
             buyer = request.user.buyer
-            search = request.GET.get("q",None)
-            page = request.GET.get("page",1)
-            limit = request.GET.get("limit",10)
-            rfq_item_list = RequestForQuotationItems.objects.filter(request_for_quotation__buyer=buyer).order_by("-created")
-            if search and rfq_item_list.exists():
-                rfq_item_list = rfq_item_list.filter(Q(product_name__icontains=check_string(search,"Search parameter"))|Q(request_for_quotation__id=int(search) if search.isdigit() else None))
-            data = []
-            pagination = Paginator(rfq_item_list,limit)
-            rfq_item_list = pagination.page(page)
-            max_page = pagination.page_range[-1]
-            for item in rfq_item_list.object_list:
-                obj_json= {
-                    "rfq_id":item.request_for_quotation.id,
-                    "rfq_item_id": item.id,
-                    "product_name": item.product_name,
-                    "quantity" : {
-                            "amount":item.quantity,
-                            "uom": item.uom,
-                        },
-                    "status": item.get_status_display(),
-                    "specifications": item.specifications,
-                    "expected_delivery_date": item.expected_delivery_date.strftime("%d/%b") if item.expected_delivery_date else None,
-                    "quotes": item.request_for_quotation_item_response.all().count()                       
+            search = request.GET.get("q", None)
+            page = int(request.GET.get("page", 1))
+            limit = int(request.GET.get("limit", 10))
+
+            rfq_item_query = RequestForQuotationItems.objects.filter(
+                request_for_quotation__buyer=buyer
+            ).select_related(
+                'request_for_quotation'
+            ).annotate(
+                quotes_count=Count('request_for_quotation_item_response')
+            ).order_by("-created")
+
+            if search:
+                rfq_item_query = rfq_item_query.filter(
+                    Q(product_name__icontains=check_string(search, "Search parameter")) |
+                    Q(request_for_quotation__id=int(search) if search.isdigit() else None)
+                )
+
+            rfq_item_query = rfq_item_query.values(
+                'request_for_quotation__id',
+                'id',
+                'product_name',
+                'quantity',
+                'uom',
+                'status',
+                'specifications',
+                'expected_delivery_date',
+                'quotes_count'
+            )
+
+            paginator = Paginator(rfq_item_query, limit)
+            rfq_items = paginator.get_page(page)
+            
+            data = [
+                {
+                    "rfq_id": item['request_for_quotation__id'],
+                    "rfq_item_id": item['id'],
+                    "product_name": item['product_name'],
+                    "quantity": {
+                        "amount": item['quantity'],
+                        "uom": item['uom'],
+                    },
+                    "status": RequestForQuotationItems.STATUS_CHOICE[item['status']-1][1],
+                    "specifications": item['specifications'],
+                    "expected_delivery_date": item['expected_delivery_date'].strftime("%d/%b") if item['expected_delivery_date'] else None,
+                    "quotes": item['quotes_count']
                 }
-                data.append(obj_json)
-            return Response({"success":True,"data":data,"pagination":{"max_page":max_page,"page_number":page}})
+                for item in rfq_items
+            ]
+
+            return Response({
+                "success": True,
+                "data": data,
+                "pagination": {
+                    "max_page": paginator.num_pages,
+                    "page_number": page
+                }
+            })
+
         except Exception as error:
-            return return_400({"success":False,"error":f"{error}"})
+            return return_400({"success": False, "error": f"{error}"})
 
 class GetRFQResponsePageData(APIView):
     """
@@ -343,7 +381,67 @@ class GetRFQResponsePageData(APIView):
             
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
-            
+  
+class BulkImportSuppliers(APIView):
+    permission_classes = (IsAuthenticated,)
+    parser_classes = (MultiPartParser, FormParser)
+
+    MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 5 MB
+    ALLOWED_EXTENSIONS = ['.csv', '.xls', '.xlsx']
+
+    def validate_file(self, file):
+        # Check file size
+        if file.size > self.MAX_UPLOAD_SIZE:
+            raise ValidationError(f"File size must be no more than {self.MAX_UPLOAD_SIZE/(1024*1024)} MB")
+
+        # Check file extension
+        file_extension = os.path.splitext(file.name)[1].lower()
+        if file_extension not in self.ALLOWED_EXTENSIONS:
+            raise ValidationError("Unsupported file format. Please upload a CSV or Excel file.")
+
+    def post(self, request):
+        try:
+            file = request.FILES.get('file')
+
+            if not file:
+                return return_400({"success": False, "message": "No file was uploaded"})
+
+            # Validate the file
+            self.validate_file(file)
+
+            # Use TemporaryUploadedFile for secure file handling
+            with TemporaryUploadedFile(file.name, file.content_type, file.size, file.charset, file.content_type_extra) as temp_file:
+                temp_file.write(file.read())
+                temp_file.flush()
+
+                if file.name.endswith('.csv'):
+                    df = pd.read_csv(temp_file.temporary_file_path())
+                elif file.name.endswith(('.xls', '.xlsx')):
+                    df = pd.read_excel(temp_file.temporary_file_path())
+
+            # Process the dataframe
+            with transaction.atomic():
+                for _, row in df.iterrows():
+                    email = row['Email']
+                    if not Supplier.objects.filter(email=email).exists():
+                        company_name = row['Company Name']
+                        person_of_contact = row['Person Of Contact']
+                        phone_no = row['Phone No']
+                        remark = row['Remark']
+                        supplier_obj = Supplier(buyer=request.user.buyer)
+                        supplier_obj.company_name = check_string(company_name, "Company Name")
+                        supplier_obj.person_of_contact = check_string(person_of_contact, "Person Of Contact")
+                        supplier_obj.phone_no = check_string(phone_no, "Phone No")
+                        supplier_obj.email = check_string(email, "Email")
+                        supplier_obj.remark = check_string(remark, "Remark") if remark else None
+                        supplier_obj.save()
+
+            return Response({"success": True, "message": "Suppliers imported successfully"})
+        except ValidationError as ve:
+            return return_400({"success": False, "error": str(ve)})
+        except Exception as error:
+            return return_400({"success": False, "error": f"{error}"})
+        
 class GetMetaData(APIView):
     """
         Create RFQ API With Support of:
@@ -375,7 +473,7 @@ class GetSuppliers(APIView):
     def get(self,request):
         try:
             buyer = request.user.buyer
-            search = request.GET.get("q")
+            search = request.GET.get("q","")
             suppliers = buyer.suppliers.all()
             if search:
                 suppliers = suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))

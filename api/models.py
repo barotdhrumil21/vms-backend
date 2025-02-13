@@ -22,6 +22,7 @@ class Supplier(models.Model):
     phone_no = models.CharField(max_length=12,null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     remark = models.TextField(null=True, blank=True)
+    is_deleted = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
     

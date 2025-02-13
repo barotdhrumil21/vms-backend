@@ -29,7 +29,7 @@ class LoginAPI(APIView):
         """
         try:
             data = request.data
-            username = data.get("username")
+            username = data.get("username").lower()
             password = data.get("password")
             if "@" not in username:
                 buyer = Buyer.objects.filter(phone_no = username)

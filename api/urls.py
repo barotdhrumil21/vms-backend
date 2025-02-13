@@ -16,4 +16,5 @@ urlpatterns = [
     path('rfq-item-data/<int:rfq_item_id>', views.RFQItemData.as_view(),name="rfq-item-data"),
     path('send-rfq-data-file/', views.GetAllRFQDataEmail.as_view(),name="send-rfq-data-file"),
     path('get-supplier-stats-data/', views.GetSuppliersStatsData.as_view(),name="get-supplier-stats-data"),
+    path('import-suppliers/', views.BulkImportSuppliers.as_view(),name="bulk-import-suppliers"),
 ]
