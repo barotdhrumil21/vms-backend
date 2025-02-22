@@ -4,6 +4,7 @@ from django.urls import path
 urlpatterns = [
     path('create-supplier/', views.CreateSupplier.as_view(),name="create-supplier"),
     path('create-user/', views.CreateUser.as_view(),name="create-user"),
+    path('framer-create-user/', views.FramerCreateUser.as_view(),name="framer-create-user"),
     path('get-suppliers/', views.GetSuppliers.as_view(),name="get-suppliers"),
     path('create-rfq/', views.CreateRFQ.as_view(),name="create-rfq"),
     path('get-rfq/', views.GetRFQ.as_view(),name="get-rfq"),

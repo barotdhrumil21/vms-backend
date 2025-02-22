@@ -185,6 +185,50 @@ class CreateUser(APIView):
                 EmailManager.user_create_failed(email_obj)  
             return Response({"success":False}) 
         
+class FramerCreateUser(APIView):
+    """
+        Create New Signup From Framer
+    """
+    def post(self,request):
+        try:
+            data = request.data
+            email = data.get("Email").lower()
+            test_mode = False
+            renews_at = datetime.now() + timedelta(days=45)
+            if not User.objects.filter(username=email).exists():
+                password = data.get("Password")
+                user = User.objects.create_user(username=email, email=email, password=password)
+                Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode)
+
+                email_obj = {
+                    "to": [email],
+                    "cc":[],
+                    "bcc":["barotdhrumil21@gmail.com"],
+                    "subject":f"Credentials for AuraVMS Login",
+                    "username":email,
+                    "password":password
+                }
+                if settings.USE_CELERY:
+                    CeleryEmailManager.new_user_signup.delay(email_obj)
+                else:
+                    EmailManager.new_user_signup(email_obj)
+            return Response({"success":True})
+        except Exception as error:
+            print(error)
+            email_obj = {
+                        "to": ["barotdhrumil21@gmail.com"],
+                        "cc":[],
+                        "bcc":[""],
+                        "subject":f"[ALERT] USER CREATION FAILED",
+                        "username":email,
+                        "error":error
+                    }
+            if settings.USE_CELERY:
+                CeleryEmailManager.user_create_failed.delay(email_obj)
+            else:
+                EmailManager.user_create_failed(email_obj)  
+            return Response({"success":False}) 
+  
 
 class CreateRFQ(APIView):
     """
