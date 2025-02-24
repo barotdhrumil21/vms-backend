@@ -463,21 +463,20 @@ class BulkImportSuppliers(APIView):
                 elif file.name.endswith(('.xls', '.xlsx')):
                     df = pd.read_excel(temp_file.temporary_file_path())
 
+            # Convert all columns to string
+            df = df.astype(str).fillna("")
+            
             # Process the dataframe
             with transaction.atomic():
                 for _, row in df.iterrows():
                     email = row['Email']
                     if not Supplier.objects.filter(email=email).exists():
-                        company_name = row['Company Name']
-                        person_of_contact = row['Person Of Contact']
-                        phone_no = row['Phone No']
-                        remark = row['Remark']
                         supplier_obj = Supplier(buyer=request.user.buyer)
-                        supplier_obj.company_name = check_string(company_name, "Company Name")
-                        supplier_obj.person_of_contact = check_string(person_of_contact, "Person Of Contact")
-                        supplier_obj.phone_no = check_string(phone_no, "Phone No")
-                        supplier_obj.email = check_string(email, "Email")
-                        supplier_obj.remark = check_string(remark, "Remark") if remark else None
+                        supplier_obj.company_name = row['Company Name']
+                        supplier_obj.person_of_contact = row['Person Of Contact']
+                        supplier_obj.phone_no = row['Phone No']
+                        supplier_obj.email = email
+                        supplier_obj.remark = row['Remark'] if 'Remark' in row else None
                         supplier_obj.save()
 
             return Response({"success": True, "message": "Suppliers imported successfully"})
