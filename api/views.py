@@ -279,7 +279,7 @@ class CreateRFQ(APIView):
                 if sup.exists():
                     sup = sup.last()
                     rfq.suppliers.add(sup)
-                    email_obj["to"] = sup.email
+                    email_obj["to"] = [sup.email]
                     email_obj["url"] = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/{sup.id}"
                     email_obj["supplier_name"] = sup.company_name
                     email_obj["company_name"] = rfq.buyer.company_name
@@ -496,12 +496,19 @@ class GetMetaData(APIView):
             buyer = request.user.buyer
             last_rfq = buyer.request_for_quotations.last()
             if last_rfq:
-                last_rfq = last_rfq.request_for_quotation_meta_data.last()
-                data = {
-                    "terms_and_conditions":last_rfq.terms_conditions,
-                    "payment_terms":last_rfq.payment_terms,
-                    "shipping_terms":last_rfq.shipping_terms,
-                }
+                last_meta = last_rfq.request_for_quotation_meta_data.last()
+                if last_meta:
+                    data = {
+                        "terms_and_conditions":last_meta.terms_conditions,
+                        "payment_terms":last_meta.payment_terms,
+                        "shipping_terms":last_meta.shipping_terms,
+                    }
+                else:
+                    data = {
+                        "terms_and_conditions":"",
+                        "payment_terms":"",
+                        "shipping_terms":"",
+                        }
                 return Response({"success":True,"data":data})
             raise Exception("No last RFQ metadata found")
         except Exception as error:
