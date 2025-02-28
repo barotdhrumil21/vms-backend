@@ -269,7 +269,7 @@ class CreateRFQ(APIView):
                 "to": [],
                 "cc":[],
                 "bcc":[],
-                "subject":f"Request for quotation raised by: {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
+                "subject":f"New Quotation Requested From {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
                 "items":items,
                 "rfq_id" : rfq.id,
                 "total_no_of_items":len(items)
@@ -465,13 +465,14 @@ class BulkImportSuppliers(APIView):
 
             # Convert all columns to string
             df = df.astype(str).fillna("")
-            
+            buyer=request.user.buyer
+
             # Process the dataframe
             with transaction.atomic():
                 for _, row in df.iterrows():
                     email = row['Email']
-                    if not Supplier.objects.filter(email=email).exists():
-                        supplier_obj = Supplier(buyer=request.user.buyer)
+                    if not Supplier.objects.filter(email=email, buyer = buyer).exists():
+                        supplier_obj = Supplier(buyer=buyer)
                         supplier_obj.company_name = row['Company Name']
                         supplier_obj.person_of_contact = row['Person Of Contact']
                         supplier_obj.phone_no = row['Phone No']
@@ -650,14 +651,14 @@ class CreateRFQResponse(APIView):
             if not items:
                 raise Exception("Items not provided")
             body = []
-            for index,item in enumerate(items):
+            for _,item in enumerate(items):
                 rfq_item = rfq.request_for_quotation_items.filter(id=item.get("rfq_item_id"))
                 if not rfq_item.exists():
                    raise Exception("Invalid RFQ item id!")
                 rfq_item = rfq_item.last()
                 if rfq_item.request_for_quotation_item_response.filter(supplier=supplier).exists():
                     continue
-                body.append(f"{index+1}.{rfq_item.product_name}({item.get('quantity')} {rfq_item.uom})\tPrice : ₹{item.get('price')} \t Lead Time : {item.get('supplier_lead_time')}\t Remarks : {item.get('supplier_remarks')}\n")
+                # body.append(f"{index+1}.{rfq_item.product_name}({item.get('quantity')} {rfq_item.uom})\tPrice : ₹{item.get('price')} \t Lead Time : {item.get('supplier_lead_time')}\t Remarks : {item.get('supplier_remarks')}\n")
                 rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
                 rfq_response.quantity = item.get("quantity")
                 rfq_response.price = item.get("price")
@@ -668,19 +669,13 @@ class CreateRFQResponse(APIView):
                 "to" : [supplier.buyer.user.email],
                 "cc" : [supplier.email],
                 "subject": "New quotation received",
-                "body":f'''
-                Dear sir/ma’am,
-                You have received new quotation from {supplier.company_name} for following products:
-                
-                {'                '.join(body)}
-                
-                Thank you
-                '''
+                "supplier_name":str(supplier.company_name),
+                "url":f"{settings.FRONTEND_URL}"
             }
             if settings.USE_CELERY:
-                CeleryEmailManager.send_email_with_body.delay(email_obj)
+                CeleryEmailManager.new_rfq_response_alert.delay(email_obj)
             else:
-                EmailManager.send_email_with_body(email_obj)
+                EmailManager.new_rfq_response_alert(email_obj)
             return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})

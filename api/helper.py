@@ -4,6 +4,9 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import get_template
 from api.models import Buyer
 import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
 
 def check_string(string,variable_name=None):
     pattern = r"^[a-zA-Z0-9\s_.,%'-@]*$"
@@ -65,7 +68,7 @@ class EmailManager:
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
-            print("***** ERROR : ",ex)
+            logger.error(f"***** EMAIL ERROR : {ex}")
     
     def new_user_signup(email_obj):
         try:
@@ -79,7 +82,21 @@ class EmailManager:
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
-            print("***** ERROR : ",ex)
+            logger.error(f"***** EMAIL ERROR : {ex}")
+    
+    def new_rfq_response_alert(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            message = EmailMultiAlternatives(subject=email_obj.get("subject",""), body=email_obj.get("body",""), 
+            from_email=from_email, to=email_obj['to'], bcc=email_obj.get('bcc',[]) + 
+                settings.DEFAULT_EMAIL_BCC_LIST,cc=email_obj.get('cc',[]) + settings.DEFAULT_EMAIL_CC_LIST)
+            html_template = get_template(os.path.join(settings.BASE_DIR, 'templates/email/') +'new_rfq_response.html').render(email_obj)
+            message.content_subtype = 'html'
+            message.attach_alternative(html_template, "text/html")
+            if settings.SEND_EMAILS:
+                message.send()
+        except Exception as ex:
+            logger.error(f"***** EMAIL ERROR : {ex}")
     
     def user_create_failed(email_obj):
         try:
@@ -93,7 +110,7 @@ class EmailManager:
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
-            print("***** ERROR : ",ex)
+            logger.error(f"***** EMAIL ERROR : {ex}")
     
     def send_all_rfq_email(buyer_id):
         try:
@@ -109,7 +126,7 @@ class EmailManager:
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
-            print("***** ERROR : ",ex)
+            logger.error(f"***** EMAIL ERROR : {ex}")
     
     def send_email_with_body(email_obj):
         try:
@@ -119,4 +136,4 @@ class EmailManager:
             if settings.SEND_EMAILS:
                 message.send()
         except Exception as ex:
-            print("***** ERROR : ",ex)
+            logger.error(f"***** EMAIL ERROR : {ex}")

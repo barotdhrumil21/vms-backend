@@ -23,5 +23,9 @@ class CeleryEmailManager:
     @app.task(queue="email_queue")
     def user_create_failed(email_obj):
         EmailManager.user_create_failed(email_obj)
+    
+    @app.task(queue="email_queue")
+    def new_rfq_response_alert(email_obj):
+        EmailManager.new_rfq_response_alert(email_obj)
         
         

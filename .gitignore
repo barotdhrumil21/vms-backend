@@ -1,5 +1,6 @@
 settings_local.py
 launch.json
+logs
 __pycache__
 *.py[cod]
 *.pyc 
