@@ -43,7 +43,9 @@ class LoginAPI(APIView):
             user = authenticate(username=username, password=decoded_password)
             if not user:
                 return return_400({"success":False, "error":"user doesn't exist"})
-            return Response({"success":True, "data":get_tokens_for_user(user)})
+            data = get_tokens_for_user(user)
+            data['email'] = user.email
+            return Response({"success":True, "data":data})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"}) 
 
