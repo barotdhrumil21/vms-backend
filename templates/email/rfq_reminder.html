@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFQ Reminder</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .content {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .button {
+            display: inline-block;
+            background-color: #000000;
+            padding: 12px 24px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .button a {
+            color: white;
+            text-decoration: none;
+            font-weight:600;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{company_name}}</h1>
+        </div>
+        <div class="content">
+            <p>Dear {{supplier_name}},</p>
+            <p>This is a friendly reminder that we are still awaiting your quote for the following item:</p>
+            <ul>
+                <li><strong>Product Name:</strong> {{product_name}}</li>
+                <li><strong>Quantity:</strong> {{quantity}} {{uom}}</li>
+                <li><strong>Specifications:</strong> {{specifications}}</li>
+                <li><strong>Expected Delivery Date:</strong> {{expected_delivery_date}}</li>
+            </ul>
+            <p>To submit your quote, please click on the button below:</p>
+            <div class="button"><a href="{{rfq_response_url}}">Submit Quote</a></div>
+            <p>If you cannot click the button, please copy and paste the following URL into your browser:</p>
+            <p>{{rfq_response_url}}</p>
+            <p>Thank you for your attention to this matter.</p>
+            <p>Best regards,<br>{{company_name}}</p>
+        </div>
+    </div>
+</body>
+</html>

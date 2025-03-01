@@ -27,5 +27,10 @@ class CeleryEmailManager:
     @app.task(queue="email_queue")
     def new_rfq_response_alert(email_obj):
         EmailManager.new_rfq_response_alert(email_obj)
+
+    @app.task(queue="email_queue")
+    def send_rfq_reminder(email_obj):
+        EmailManager.send_rfq_reminder(email_obj)
+
         
         

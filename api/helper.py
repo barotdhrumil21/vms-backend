@@ -5,6 +5,8 @@ from django.template.loader import get_template
 from api.models import Buyer
 import pandas as pd
 import logging
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,37 @@ def get_all_rfq_data(buyer):
     return data
 
 class EmailManager:
+    @staticmethod
+    def send_rfq_reminder(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            subject = email_obj.get("subject", "Reminder: Quote Request")
+            to_email = email_obj.get("to", [])
+            cc_email = email_obj.get("cc", [])
+            bcc_email = email_obj.get("bcc", []) + settings.DEFAULT_EMAIL_BCC_LIST
+
+            context = {
+                "company_name": email_obj.get("company_name"),
+                "supplier_name": email_obj.get("supplier_name"),
+                "product_name": email_obj.get("product_name"),
+                "quantity": email_obj.get("quantity"),
+                "uom": email_obj.get("uom"),
+                "specifications": email_obj.get("specifications"),
+                "expected_delivery_date": email_obj.get("expected_delivery_date"),
+                "rfq_response_url": email_obj.get("rfq_response_url"),
+            }
+
+            html_content = render_to_string("email/rfq_reminder.html", context)
+            text_content = strip_tags(html_content)  # Create a text version of the HTML email
+
+            msg = EmailMultiAlternatives(subject, text_content, from_email, to_email, cc=cc_email, bcc=bcc_email)
+            msg.attach_alternative(html_content, "text/html")
+
+            if settings.SEND_EMAILS:
+                msg.send()
+        except Exception as ex:
+            logger.error(f"***** EMAIL ERROR : {ex}")
+
     def send_rfq_created_email(email_obj):
         try:
             from_email = settings.EMAIL_HOST_USER

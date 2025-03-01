@@ -848,7 +848,68 @@ class GetSuppliersStatsData(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
+class SendRFQReminder(APIView):
+    """
+    Send reminders to suppliers who haven't quoted for a specific RFQ item.
+    """
+    permission_classes = (IsAuthenticated,)
 
+    def post(self, request):
+        try:
+            rfq_item_id = request.data.get('rfq_item_id')
+            if not rfq_item_id:
+                raise ValueError("RFQ item ID is required")
+
+            rfq_item = RequestForQuotationItems.objects.get(id=rfq_item_id)
+            rfq = rfq_item.request_for_quotation
+            buyer = request.user.buyer
+
+            if rfq.buyer != buyer:
+                raise ValueError("You don't have permission to send reminders for this RFQ")
+
+            suppliers_to_remind = []
+            for supplier in rfq.suppliers.all():
+                if not RequestForQuotationItemResponse.objects.filter(
+                    request_for_quotation_item=rfq_item,
+                    supplier=supplier
+                ).exists():
+                    suppliers_to_remind.append(supplier)
+
+            if not suppliers_to_remind:
+                return Response({"success": True, "message": "All suppliers have already quoted for this item."})
+
+            rfq_response_url = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/"
+            
+            for supplier in suppliers_to_remind:
+                email_obj = {
+                    "to": [supplier.email],
+                    "cc": [buyer.user.email],
+                    "subject": f"Reminder: Quote Request for {rfq_item.product_name}",
+                    "company_name": buyer.company_name,
+                    "supplier_name": supplier.person_of_contact,
+                    "product_name": rfq_item.product_name,
+                    "quantity": rfq_item.quantity,
+                    "uom": rfq_item.uom,
+                    "specifications": rfq_item.specifications,
+                    "expected_delivery_date": rfq_item.expected_delivery_date.strftime("%d %b %Y") if rfq_item.expected_delivery_date else "Not specified",
+                    "rfq_response_url": rfq_response_url + str(supplier.id)
+                }
+
+                if settings.USE_CELERY:
+                    CeleryEmailManager.send_rfq_reminder.delay(email_obj)
+                else:
+                    EmailManager.send_rfq_reminder(email_obj)
+
+            return Response({
+                "success": True,
+                "message": f"Reminders sent to {len(suppliers_to_remind)} suppliers."
+            })
+
+        except RequestForQuotationItems.DoesNotExist:
+            return return_400({"success": False, "error": "Invalid RFQ item ID"})
+        except Exception as error:
+            return return_400({"success": False, "error": str(error)})
+            
 def TestEmail(request):
     obj={
         'items': [
