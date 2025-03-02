@@ -88,17 +88,17 @@ class GetUserDetailsAPI(APIView):
             data = request.data
             if buyer :
                 if data.get("first_name"):
-                    user.first_name = check_string(data.get("first_name"),"first_name")
+                    user.first_name = str(data.get("first_name"))
                 if data.get("last_name"):
-                    user.last_name = check_string(data.get("last_name"),"last_name")
+                    user.last_name = str(data.get("last_name"))
                 if data.get("phone_no"):
-                    buyer.phone_no = check_string(data.get("phone_no"),"phone_no")
+                    buyer.phone_no = str(data.get("phone_no"))
                 if data.get("company_name"):
-                    buyer.company_name = check_string(data.get("company_name"),"company_name")
+                    buyer.company_name = str(data.get("company_name"))
                 if data.get("gst_no"):
-                    buyer.gst_no = check_string(data.get("gst_no"),"gst_no")
+                    buyer.gst_no = str(data.get("gst_no"))
                 if data.get("address"):
-                    buyer.address = check_string(data.get("address"),"address")
+                    buyer.address = str(data.get("address"))
                 user.save()
                 buyer.save()
                 return Response({"success":True})

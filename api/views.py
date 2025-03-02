@@ -253,17 +253,17 @@ class CreateRFQ(APIView):
             rfq = RequestForQuotation(buyer=buyer)
             rfq.save()
             meta_data = {
-                "terms_conditions" : check_string(terms_and_condition,"terms_and_conditions") if terms_and_condition else None,
-                "payment_terms" : check_string(payment_terms,"payment_terms") if payment_terms else None,
-                "shipping_terms" : check_string(shipping_terms,"shipping_terms") if shipping_terms else None
+                "terms_conditions" : str(terms_and_condition) if terms_and_condition else None,
+                "payment_terms" : str(payment_terms) if payment_terms else None,
+                "shipping_terms" : str(shipping_terms) if shipping_terms else None
             }
             RequestForQuotationMetaData(**meta_data,request_for_quotation = rfq).save()
             for item in items:
                 rfq_item = RequestForQuotationItems(request_for_quotation = rfq)
-                rfq_item.product_name = check_string(item.get("product_name"),"item_product_name")
+                rfq_item.product_name = str(item.get("product_name"))
                 rfq_item.quantity = float(item.get("quantity"))
-                rfq_item.uom = check_string(item.get("uom"),"item_uom")
-                rfq_item.specifications = check_string(item.get("specifications"),"item_specifications") if item.get("specifications") else None
+                rfq_item.uom = str(item.get("uom"))
+                rfq_item.specifications = str(item.get("specifications")) if item.get("specifications") else ""
                 rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%d/%m/%Y")
                 rfq_item.save()
             email_obj = {
