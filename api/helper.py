@@ -150,7 +150,12 @@ class EmailManager:
             buyer = Buyer.objects.get(id=buyer_id)
             data = get_all_rfq_data(buyer=buyer)
             dataFrame = pd.DataFrame(data)
-            file_name = f"media/templates/{buyer.user.first_name}_{buyer.id}.xlsx"
+            
+            # Create the directory if it doesn't exist
+            export_dir = os.path.join(settings.BASE_DIR, 'media', 'rfq-exports')
+            os.makedirs(export_dir, exist_ok=True)
+
+            file_name = f"media/rfq-exports/{buyer.user.first_name}_{buyer.id}.xlsx"
             dataFrame.to_excel(file_name,index=False)
             from_email = settings.EMAIL_HOST_USER
             message = EmailMultiAlternatives(subject="Request For Quotation File Available", body="Please find the below attached excel sheet.", 
