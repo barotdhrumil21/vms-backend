@@ -193,12 +193,13 @@ class FramerCreateUser(APIView):
         try:
             data = request.data
             email = data.get("Email").lower()
+            phone = data.get("Phone Number").lower()
             test_mode = False
             renews_at = datetime.now() + timedelta(days=45)
             if not User.objects.filter(username=email).exists():
                 password = data.get("Password")
                 user = User.objects.create_user(username=email, email=email, password=password)
-                Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode)
+                Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode, phone_no=phone)
 
                 email_obj = {
                     "to": [email],
