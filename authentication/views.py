@@ -8,6 +8,12 @@ from api.helper import check_string
 from django.conf import settings
 from authentication.utils import return_400, get_tokens_for_user
 from api.models import Buyer
+from rest_framework import status
+from django.contrib.auth.models import User
+from rest_framework_simplejwt.tokens import RefreshToken
+from api.helper import EmailManager
+from api.task import CeleryEmailManager
+from datetime import datetime, timedelta
 
 # Create your views here.
 
@@ -106,3 +112,64 @@ class GetUserDetailsAPI(APIView):
                 return return_400({"success": False, "error":"User details not found."})
         except Exception as error:
             return return_400({"success":False,"error":f"An unexpected error occured : {error}"})       
+
+class SignUpView(APIView):
+    def post(self, request):
+        try:
+            data = request.data
+            email = data.get("email").lower()
+            phone_no = data.get("phone_no")
+            password = data.get("password")
+
+            if User.objects.filter(username=email).exists():
+                return Response({"success": False, "message": "User with this email already exists"}, status=status.HTTP_400_BAD_REQUEST)
+
+            user = User.objects.create_user(username=email, email=email, password=password)
+            renews_at = datetime.now() + timedelta(days=45)
+            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no)
+
+            # Send welcome email
+            email_obj = {
+                "to": [email],
+                "cc": [],
+                "bcc": ["barotdhrumil21@gmail.com"],
+                "subject": "Welcome to AuraVMS",
+                "username": email,
+                "password":password
+            }
+            if settings.USE_CELERY:
+                CeleryEmailManager.new_user_signup.delay(email_obj)
+            else:
+                EmailManager.new_user_signup(email_obj)
+
+            # Authenticate user and generate tokens
+            authenticated_user = authenticate(username=email, password=password)
+            refresh = RefreshToken.for_user(authenticated_user)
+
+            return Response({
+                "success": True,
+                "message": "User created successfully",
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "user": {
+                    "email": authenticated_user.email,
+                    "username": authenticated_user.username,
+                    "phone":phone_no
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as error:
+            print(error)
+            email_obj = {
+                "to": ["barotdhrumil21@gmail.com"],
+                "cc": [],
+                "bcc": [""],
+                "subject": "[ALERT] USER CREATION FAILED",
+                "username": email,
+                "error": str(error)
+            }
+            if settings.USE_CELERY:
+                CeleryEmailManager.user_create_failed.delay(email_obj)
+            else:
+                EmailManager.user_create_failed(email_obj)
+            return Response({"success": False, "message": "User creation failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

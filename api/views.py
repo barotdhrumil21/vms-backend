@@ -61,7 +61,7 @@ class CreateSupplier(APIView):
             return Response({"success":True, "data":{"supplier_id":supplier_obj.id}})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
-    
+
     def put(self,request):
         """
             API PUT Method
@@ -114,7 +114,7 @@ class CreateSupplier(APIView):
             return Response({"success":True})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
-    
+
     def delete(self,request):
         """
             API DELETE Method
@@ -142,7 +142,7 @@ class CreateUser(APIView):
             data = request.data
             event = data.get("meta").get("event_name")
             if event == "subscription_updated":
-                
+
                 email = data.get("data").get("attributes").get("user_email").lower()
                 # user_name = data.get("data").get("attributes").get("user_name")
                 renews_at = datetime.fromisoformat(data.get("data").get("attributes").get("renews_at").replace("Z", "+00:00"))
@@ -184,7 +184,7 @@ class CreateUser(APIView):
             else:
                 EmailManager.user_create_failed(email_obj)  
             return Response({"success":False}) 
-        
+
 class FramerCreateUser(APIView):
     """
         Create New Signup From Framer
@@ -229,7 +229,7 @@ class FramerCreateUser(APIView):
             else:
                 EmailManager.user_create_failed(email_obj)  
             return Response({"success":False}) 
-  
+
 
 class CreateRFQ(APIView):
     """
@@ -336,7 +336,7 @@ class GetRFQ(APIView):
 
             paginator = Paginator(rfq_item_query, limit)
             rfq_items = paginator.get_page(page)
-            
+
             data = [
                 {
                     "rfq_id": item['request_for_quotation__id'],
@@ -423,10 +423,10 @@ class GetRFQResponsePageData(APIView):
                     }
                 data["items"].append(item_obj)
             return Response({"success":True,"data":data})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
-  
+
 class BulkImportSuppliers(APIView):
     permission_classes = (IsAuthenticated,)
     parser_classes = (MultiPartParser, FormParser)
@@ -486,7 +486,7 @@ class BulkImportSuppliers(APIView):
             return return_400({"success": False, "error": str(ve)})
         except Exception as error:
             return return_400({"success": False, "error": f"{error}"})
-        
+
 class GetMetaData(APIView):
     """
         Create RFQ API With Support of:
@@ -531,7 +531,7 @@ class GetSuppliers(APIView):
                 suppliers = suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
             gte_date = datetime.now() - timedelta(days=5)
             rfq_list = RequestForQuotation.objects.filter(created__gte=gte_date, buyer = buyer).order_by('-created')
-            
+
             data = []
             supplier_added = {}
             for rfq in rfq_list:
@@ -584,7 +584,7 @@ class GetSupplierCategories(APIView):
             for category in categories:
                 data.add(category.name)
             return Response({"success":True,"data":[{"label":category,"value":category} for category in list(data)]})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -604,7 +604,7 @@ class GetRfqUom(APIView):
             for uom in uom_dic:
                 data.add(uom.get("uom"))
             return Response({"success":True,"data":[{"label":uom,"value":uom} for uom in list(data)]})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -622,7 +622,7 @@ class GetRfqProduct(APIView):
             for product in product_dic:
                 data.add(product.get("product_name"))
             return Response({"success":True,"data":[{"label":uom,"value":uom} for uom in list(data)]})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -746,7 +746,7 @@ class RFQItemData(APIView):
             return Response({"success":True,"data":data})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
-    
+
     def post(self,request,rfq_item_id):
         """
             API POST Method
@@ -772,7 +772,7 @@ class RFQItemData(APIView):
                 Dear sir/ma’am,
                 Congratulations! You have received a new order. The details are as mentioned below.
                 Please acknowledge the email to confirm the order.
-                
+
                 Product Name      : {rfq_item.product_name}
                 Price             : ₹{response.price}
                 Quantity          : {response.quantity} {rfq_item.uom}
@@ -804,7 +804,7 @@ class GetAllRFQDataEmail(APIView):
             else:
                 EmailManager.send_all_rfq_email(buyer.id)
             return Response({"success":True})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -845,7 +845,7 @@ class GetSuppliersStatsData(APIView):
                     else:
                         d["contribution_percent"] = "--"
             return Response({"success":True, "data":data})
-            
+
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
 
@@ -880,7 +880,7 @@ class SendRFQReminder(APIView):
                 return Response({"success": True, "message": "All suppliers have already quoted for this item."})
 
             rfq_response_url = f"{settings.FRONTEND_URL}/rfq-response/{rfq.id}/"
-            
+
             for supplier in suppliers_to_remind:
                 email_obj = {
                     "to": [supplier.email],
@@ -910,7 +910,7 @@ class SendRFQReminder(APIView):
             return return_400({"success": False, "error": "Invalid RFQ item ID"})
         except Exception as error:
             return return_400({"success": False, "error": str(error)})
-            
+
 def TestEmail(request):
     obj={
         'items': [
@@ -973,5 +973,3 @@ def TestEmail(request):
                 data.append(obj)
     print(data,len(data))
     return render(request,"email/RFQ_Created_Email_Template.html",obj)
-        
-
