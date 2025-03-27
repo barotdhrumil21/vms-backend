@@ -6,7 +6,7 @@ import uuid
 class Buyer(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='buyer')
     subscription_expiry_date = models.DateTimeField(auto_now_add=False)
-    phone_no = models.CharField(max_length = 12, null = True, blank=True)
+    phone_no = models.CharField(max_length = 200, null = True, blank=True)
     company_name = models.CharField(max_length = 255, null = True, blank=True)
     gst_no = models.CharField(max_length = 50, null = True, blank=True)
     address = models.CharField(max_length = 255, null = True, blank=True)
