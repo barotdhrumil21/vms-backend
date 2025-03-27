@@ -433,6 +433,8 @@ class BulkImportSuppliers(APIView):
 
     MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 5 MB
     ALLOWED_EXTENSIONS = ['.csv', '.xls', '.xlsx']
+    REQUIRED_COLUMNS = ['Company Name', 'Person Of Contact', 'Phone No', 'Email']
+
 
     def validate_file(self, file):
         # Check file size
@@ -443,6 +445,18 @@ class BulkImportSuppliers(APIView):
         file_extension = os.path.splitext(file.name)[1].lower()
         if file_extension not in self.ALLOWED_EXTENSIONS:
             raise ValidationError("Unsupported file format. Please upload a CSV or Excel file.")
+        
+    def validate_columns(self, df):
+        missing_columns = set(self.REQUIRED_COLUMNS) - set(df.columns)
+        if missing_columns:
+            raise ValidationError(f"Missing required columns: {', '.join(missing_columns)}")
+        
+    def validate_phone_number(self, phone_number):
+        # Regex for phone number validation
+        regex = r'^\+?[0-9-\s]{8,200}$'
+        if not re.match(regex, phone_number):
+            raise ValidationError(f"Invalid phone number format: {phone_number}")
+
 
     def post(self, request):
         try:
@@ -464,6 +478,9 @@ class BulkImportSuppliers(APIView):
                 elif file.name.endswith(('.xls', '.xlsx')):
                     df = pd.read_excel(temp_file.temporary_file_path())
 
+            # Validate required columns
+            self.validate_columns(df)
+            
             # Convert all columns to string
             df = df.astype(str).fillna("")
             buyer=request.user.buyer
@@ -472,11 +489,16 @@ class BulkImportSuppliers(APIView):
             with transaction.atomic():
                 for _, row in df.iterrows():
                     email = row['Email']
+                    phone_no = row['Phone No']
+                    
+                    # Validate phone number
+                    self.validate_phone_number(phone_no)
+
                     if not Supplier.objects.filter(email=email, buyer = buyer).exists():
                         supplier_obj = Supplier(buyer=buyer)
                         supplier_obj.company_name = row['Company Name']
                         supplier_obj.person_of_contact = row['Person Of Contact']
-                        supplier_obj.phone_no = row['Phone No']
+                        supplier_obj.phone_no = phone_no
                         supplier_obj.email = email
                         supplier_obj.remark = row['Remark'] if 'Remark' in row else None
                         supplier_obj.save()
