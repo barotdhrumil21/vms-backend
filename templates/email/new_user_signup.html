@@ -1,120 +1,67 @@
 {% load static %}
-<body >
-  <div style="display: grid; ">
-    <table
-      class="top-content"
-      style="padding: 40px 0; border-bottom: solid 1px #00000033; min-width: 50%; width: fit-content; margin: auto;"
-    >
-      <tr style="text-align: center">
-        <th
-          style="
-            font-family: 'Inter', sans-serif;
-            font-weight: 700;
-            font-size: 48px;
-            line-height: 58.09px;
-          "
-        >
-        AuraVMS Admin
-        </th>
-      </tr>
-      <tr style="text-align: left">
-        <td
-            style="
-                font-family: 'Lato', sans-serif;
-                font-weight: 400;
-                font-size: 16px;
-                line-height: 24px;
-                padding: 22px;
-                background-color: #f0f0f0;
-                border-radius: 2px;
-            "
-        >
-            <div style="font-size: 16px; margin-bottom: 12px;">
-                Hello! <br /> <br /> 
-                Please login to <strong>app.auravms.com</strong> with the following credentials:
-            </div>
-            <div style="font-size: 16px;">
-                <span style="font-weight: bold;">Login page URL:</span> <span style="font-size: 16px;">https://app.auravms.com</span>
-            </div>
-            <div style="margin-top: 10px;">
-                <span style="font-weight: bold;">Username:</span> <span style="font-size: 16px;">{{username}}</span>
-            </div>
-            <div style="margin-top: 10px;">
-                <span style="font-weight: bold;">Password:</span> <span style="font-size: 16px;">{{password}}</span>
-            </div>
-        </td>
-    </tr>
-    
-    
-    </table>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: 'Inter', sans-serif;">
+  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
+    <header style="text-align: center; margin-bottom: 40px;">
+      <h1 style="font-size: 32px; font-weight: 700; color: #1f2937; margin: 0;">AuraVMS Admin</h1>
+    </header>
 
-  </table>
-  <table class="footer-content" style="text-align: center; padding-top: 76px">
-    <tr>
-      <td>
-        <div class="main">
-          <p
-            style="
-              font-family: Lato;
-              font-size: 16px;
-              font-weight: 400;
-              line-height: 24px;
-              letter-spacing: 0em;
-              margin: 0;
-              color: #333333;
-            "
-          >
-            Powered By VMS
-          </p>
-          <div
-            class="icons"
-            style="
-              padding: 16px;
-              display: grid;
-              grid-template-columns: auto auto auto;
-              width: fit-content;
-              gap: 24px;
-              margin: auto;
-            "
-          >
-            <img
-              alt="twitter"
-              src="./images/twitter.svg"
-              height="24"
-              width="24"
-            />
-            <img
-              alt="facebook"
-              src="./images/facebook.svg"
-              height="24"
-              width="24"
-            /><img
-              alt="linkedin"
-              src="./images/linkedin.svg"
-              height="24"
-              width="24"
-            />
-          </div>
-          <p
-            class="copyright"
-            style="
-              font-family: Inter;
-              font-size: 12px;
-              font-weight: 400;
-              line-height: 16px;
-              letter-spacing: 0em;
-              margin: 0;
-              color: #00000080;
-              text-align: center;
-            "
-          >
-            Copyright © 2025 AuraVMS<br />
-            A better company begins with a personalised vendor management
-            experience.
-          </p>
+    <main>
+      <section style="background-color: #f9fafb; padding: 24px; border-radius: 8px; margin-bottom: 40px;">
+        <h2 style="font-size: 20px; font-weight: 600; color: #374151; margin-top: 0; margin-bottom: 16px;">Welcome to AuraVMS</h2>
+        <p style="font-size: 16px; color: #4b5563; margin-bottom: 16px;">
+          Please login to <strong>app.auravms.com</strong> with the following credentials:
+        </p>
+        <div style="background-color: #ffffff; padding: 16px; border-radius: 6px; border: 1px solid #e5e7eb;">
+          <p style="margin: 0 0 8px 0;"><strong style="color: #374151;">Login page URL:</strong> <a href="https://app.auravms.com" style="color: #2563eb; text-decoration: none;">https://app.auravms.com</a></p>
+          <p style="margin: 0 0 8px 0;"><strong style="color: #374151;">Username:</strong> <span style="color: #4b5563;">{{username}}</span></p>
+          <p style="margin: 0;"><strong style="color: #374151;">Password:</strong> <span style="color: #4b5563;">{{password}}</span></p>
         </div>
-      </td>
-    </tr>
-  </table>
-</div>
+      </section>
+
+      <section style="margin-bottom: 40px;">
+        <h2 style="font-size: 20px; font-weight: 600; color: #374151; margin-top: 0; margin-bottom: 16px;">How to get started</h2>
+        <p style="font-size: 16px; color: #4b5563; margin-bottom: 16px;">
+          Watch our video guide on how to use AuraVMS:
+        </p>
+        <a href="https://youtu.be/H7apTtDrXBc?si=GwgUjOagkvK-ypzX" target="_blank" style="display: block; text-align: center;">
+          <img src="https://img.youtube.com/vi/H7apTtDrXBc/0.jpg" alt="How to use AuraVMS" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
+        </a>
+      </section>
+
+      <section style="text-align: center; margin-bottom: 40px;">
+        <h2 style="font-size: 20px; font-weight: 600; color: #374151; margin-top: 0; margin-bottom: 16px;">Schedule a Demo</h2>
+        <p style="font-size: 16px; color: #4b5563; margin-bottom: 16px;">
+          Want a personalized walkthrough? Book a demo call with us:
+        </p>
+        <a href="https://calendly.com/barotdhrumil21/auravms-demo" target="_blank" style="
+          display: inline-block;
+          padding: 12px 24px;
+          background-color: #2563eb;
+          color: #ffffff;
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 16px;
+          border-radius: 6px;
+          transition: background-color 0.3s ease;
+        ">
+          Schedule Demo
+        </a>
+      </section>
+    </main>
+
+    <footer style="text-align: center; border-top: 1px solid #e5e7eb; padding-top: 24px;">
+      <p style="font-size: 14px; color: #6b7280; margin-bottom: 16px;">
+        Powered By VMS
+      </p>
+      <div style="margin-bottom: 16px;">
+        <a href="#" style="display: inline-block; margin: 0 8px;"><img alt="twitter" src="./images/twitter.svg" height="24" width="24"></a>
+        <a href="#" style="display: inline-block; margin: 0 8px;"><img alt="facebook" src="./images/facebook.svg" height="24" width="24"></a>
+        <a href="#" style="display: inline-block; margin: 0 8px;"><img alt="linkedin" src="./images/linkedin.svg" height="24" width="24"></a>
+      </div>
+      <p style="font-size: 12px; color: #9ca3af; margin: 0;">
+        Copyright © 2025 AuraVMS<br>
+        A better company begins with a personalised vendor management experience.
+      </p>
+    </footer>
+  </div>
 </body>

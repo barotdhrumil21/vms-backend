@@ -11,7 +11,7 @@ import io, os
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import TemporaryUploadedFile
-
+import re
 from api.models import Buyer, Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
 from django.db.models import Q,F,Sum, Count
@@ -457,7 +457,16 @@ class BulkImportSuppliers(APIView):
         if not re.match(regex, phone_number):
             raise ValidationError(f"Invalid phone number format: {phone_number}")
 
-
+    def validate_email(email):
+        """
+        Validate an email address.
+        """
+        # Regular expression for email validation
+        valid_regex = r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$"
+        
+        if not re.match(valid_regex, email.strip()):
+            raise ValidationError(f"Invalid email format: {email}")
+        
     def post(self, request):
         try:
             file = request.FILES.get('file')
@@ -493,6 +502,7 @@ class BulkImportSuppliers(APIView):
                     
                     # Validate phone number
                     self.validate_phone_number(phone_no)
+                    self.validate_email(email)
 
                     if not Supplier.objects.filter(email=email, buyer = buyer).exists():
                         supplier_obj = Supplier(buyer=buyer)
