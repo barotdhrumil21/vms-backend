@@ -19,4 +19,5 @@ urlpatterns = [
     path('get-supplier-stats-data/', views.GetSuppliersStatsData.as_view(),name="get-supplier-stats-data"),
     path('import-suppliers/', views.BulkImportSuppliers.as_view(),name="bulk-import-suppliers"),
     path('send-reminders/', views.SendRFQReminder.as_view(),name="send-rfq-reminders-to-suppliers"),
+    path('dashboard-stats/', views.DashboardStats.as_view(), name="dashboard-stats"),
 ]

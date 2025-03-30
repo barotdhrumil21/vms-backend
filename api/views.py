@@ -14,13 +14,15 @@ from django.core.files.uploadedfile import TemporaryUploadedFile
 import re
 from api.models import Buyer, Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
-from django.db.models import Q,F,Sum, Count
+from django.db.models import Count, Avg, Sum, F, ExpressionWrapper, FloatField, Q, DurationField
 from datetime import datetime, timedelta
 from django.db import transaction
 from api.task import CeleryEmailManager
 from .helper import EmailManager
 from django.shortcuts import render
 from django.core.paginator import Paginator
+from django.utils import timezone
+from django.db.models.functions import Cast
 
 class CreateSupplier(APIView):
     """
@@ -940,6 +942,136 @@ class SendRFQReminder(APIView):
 
         except RequestForQuotationItems.DoesNotExist:
             return return_400({"success": False, "error": "Invalid RFQ item ID"})
+        except Exception as error:
+            return return_400({"success": False, "error": str(error)})
+
+class DashboardStats(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        try:
+            filter_type = request.GET.get('filter', 'all')
+            buyer = request.user.buyer
+
+            # Define the date range based on the filter
+            end_date = timezone.now()
+            if filter_type == 'today':
+                start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif filter_type == '7days':
+                start_date = end_date - timezone.timedelta(days=7)
+            elif filter_type == '30days':
+                start_date = end_date - timezone.timedelta(days=30)
+            elif filter_type == '90days':
+                start_date = end_date - timezone.timedelta(days=90)
+            else:  # 'all'
+                start_date = None
+
+            # Apply date filter if applicable
+            date_filter = Q() if start_date is None else Q(created__gte=start_date, created__lte=end_date)
+
+            # 1. RFQs
+            rfqs = RequestForQuotation.objects.filter(buyer=buyer).filter(date_filter)
+            rfq_items = RequestForQuotationItems.objects.filter(request_for_quotation__in=rfqs)
+            
+            # 1.1 Open RFQs count
+            open_rfqs_count = rfqs.filter(request_for_quotation_items__status=RequestForQuotationItems.OPEN).distinct().count()
+
+            # 1.2 Total RFQs count
+            total_rfqs_count = rfqs.count()
+
+            # 1.3 Average item SLA
+            avg_sla = rfq_items.filter(status=RequestForQuotationItems.CLOSE).annotate(
+                sla=ExpressionWrapper(
+                    F('request_for_quotation_item_response__updated') - F('created'),
+                    output_field=DurationField()
+                )
+            ).aggregate(avg_sla=Avg('sla'))['avg_sla']
+
+            # 1.4 RFQs count by product
+            rfqs_by_product = rfq_items.values('product_name').annotate(count=Count('id'))
+
+            # 1.5 Total purchase value
+            total_purchase_value = RequestForQuotationItemResponse.objects.filter(
+                request_for_quotation_item__in=rfq_items,
+                order_status=RequestForQuotationItemResponse.ORDER_PLACED
+            ).aggregate(total=Sum(F('price') * F('quantity')))['total'] or 0
+
+            # 2. Suppliers
+            suppliers = Supplier.objects.filter(buyer=buyer)
+
+            # 2.1 Total suppliers count
+            total_suppliers_count = suppliers.count()
+
+            # 2.2 Suppliers by tag - count
+            suppliers_by_tag = suppliers.values('categories__name').annotate(count=Count('id'))
+
+            # 2.3 Suppliers by product count
+            suppliers_by_product = RequestForQuotationItemResponse.objects.filter(
+                request_for_quotation_item__in=rfq_items
+            ).values('request_for_quotation_item__product_name').annotate(
+                supplier_count=Count('supplier', distinct=True)
+            ).values('request_for_quotation_item__product_name', 'supplier_count')
+
+            # 2.4 Suppliers by response%
+            suppliers_response = suppliers.annotate(
+                total_rfqs=Count('request_for_quotations'),
+                responded_rfqs=Count('request_for_quotation_responses')
+            ).annotate(
+                response_rate=ExpressionWrapper(
+                    F('responded_rfqs') * 100.0 / F('total_rfqs'),
+                    output_field=FloatField()
+                )
+            )
+
+            # 2.5 & 2.6 Purchase count and value by supplier
+            supplier_purchases = RequestForQuotationItemResponse.objects.filter(
+                request_for_quotation_item__in=rfq_items,
+                order_status=RequestForQuotationItemResponse.ORDER_PLACED
+            ).values('supplier__company_name').annotate(
+                count=Count('id'),
+                value=Sum(F('price') * F('quantity'))
+            ).order_by('-value')
+
+            # 2.7 Lead time by suppliers
+            lead_time_by_suppliers = suppliers.annotate(
+                avg_lead_time=Avg(
+                    Cast('request_for_quotation_responses__lead_time', output_field=FloatField())
+                )
+            ).exclude(avg_lead_time__isnull=True).order_by('avg_lead_time').values('company_name', 'avg_lead_time')
+
+
+
+            total_purchase_count = sum(item['count'] for item in supplier_purchases)
+            for item in supplier_purchases:
+                item['count_percentage'] = (item['count'] / total_purchase_count) * 100 if total_purchase_count else 0
+                item['value_percentage'] = (item['value'] / total_purchase_value) * 100 if total_purchase_value else 0
+
+            response_data = {
+                "rfqs": {
+                    "open_rfqs_count": open_rfqs_count,
+                    "total_rfqs_count": total_rfqs_count,
+                    "average_item_sla_in_hours": avg_sla.total_seconds() / 3600 if avg_sla else None,  # in hours
+                    "rfqs_by_product": list(rfqs_by_product),
+                    "total_purchase_value": total_purchase_value
+                },
+                "suppliers": {
+                    "total_suppliers_count": total_suppliers_count,
+                    "suppliers_by_tag": list(suppliers_by_tag),
+                    "suppliers_by_product": list(suppliers_by_product),
+                    "suppliers_by_response_rate": list(suppliers_response.values('company_name', 'response_rate')),
+                    "purchase_by_supplier": list(supplier_purchases),
+                    "lead_time_by_suppliers": [
+                        {
+                            "company_name": item['company_name'],
+                            "avg_lead_time_days": item['avg_lead_time']
+                        }
+                        for item in lead_time_by_suppliers
+                    ]
+                }
+            }
+
+            return Response({"success": True, "data": response_data})
+
         except Exception as error:
             return return_400({"success": False, "error": str(error)})
 
