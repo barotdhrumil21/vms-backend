@@ -23,6 +23,8 @@ from django.shortcuts import render
 from django.core.paginator import Paginator
 from django.utils import timezone
 from django.db.models.functions import Cast
+from django.core.validators import validate_email
+
 
 class CreateSupplier(APIView):
     """
@@ -38,31 +40,54 @@ class CreateSupplier(APIView):
         """
         try:
             data = request.data
-            company_name = data.get("company_name") #IMPORTANT
-            person_of_contact = data.get("person_of_contact") #IMPORTANT
-            phone_no = data.get("phone_no") #IMPORTANT
-            email = data.get("email") #IMPORTANT
+            company_name = data.get("company_name")
+            person_of_contact = data.get("person_of_contact")
+            phone_no = data.get("phone_no")
+            email = data.get("email")
             categories = data.get("categories")
             remark = data.get("remark")
             buyer = request.user.buyer
-            if not (company_name and person_of_contact and phone_no and email):
-                raise Exception("Important parameters missing!")
+
+            # Validations
+            if not all([company_name, person_of_contact, phone_no, email]):
+                raise ValidationError("Important parameters missing!")
+
+            # Validate email
+            try:
+                validate_email(email)
+            except ValidationError:
+                raise ValidationError("Invalid email format")
+
+            # Validate phone number
+            if not re.match(r'^\+?[0-9-\s]{8,20}$', phone_no):
+                raise ValidationError("Invalid phone number format")
+
+            # Check if supplier with this email already exists
             if buyer.suppliers.filter(email=email).exists():
-                raise Exception("Supplier with this email id already exists!")
+                raise ValidationError("Supplier with this email id already exists!")
+
+            # Create supplier
             supplier_obj = Supplier(buyer=buyer)
-            supplier_obj.company_name = check_string(company_name,"Company Name")
-            supplier_obj.person_of_contact = check_string(person_of_contact,"Person Of Contact")
-            supplier_obj.phone_no = check_string(phone_no,"Phone No")
-            supplier_obj.email = check_string(email,"Email")
-            supplier_obj.remark = check_string(remark,"Remark") if remark else None
+            supplier_obj.company_name = company_name
+            supplier_obj.person_of_contact = person_of_contact
+            supplier_obj.phone_no = phone_no
+            supplier_obj.email = email
+            supplier_obj.remark = remark
             supplier_obj.save()
+
+            # Add categories
             for category in categories:
-                supplier_category = SupplierCategory(buyer=buyer,supplier = supplier_obj)
-                supplier_category.name = check_string(category,"category")
+                supplier_category = SupplierCategory(buyer=buyer, supplier=supplier_obj)
+                supplier_category.name = category
                 supplier_category.save()
-            return Response({"success":True, "data":{"supplier_id":supplier_obj.id}})
+
+            return Response({"success": True, "data": {"supplier_id": supplier_obj.id}})
+
+        except ValidationError as ve:
+            return return_400({"success": False, "error": str(ve)})
         except Exception as error:
-            return return_400({"success":False,"error":f"{error}"})
+            return return_400({"success": False, "error": str(error)})
+
 
     def put(self,request):
         """
