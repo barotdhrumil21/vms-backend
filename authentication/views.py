@@ -120,13 +120,14 @@ class SignUpView(APIView):
             email = data.get("email").lower()
             phone_no = data.get("phone_no")
             password = data.get("password")
+            company_name = data.get("company_name")
 
             if User.objects.filter(username=email).exists():
                 return Response({"success": False, "message": "User with this email already exists"}, status=status.HTTP_400_BAD_REQUEST)
 
             user = User.objects.create_user(username=email, email=email, password=password)
             renews_at = datetime.now() + timedelta(days=45)
-            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no)
+            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no, company_name = company_name)
 
             # Send welcome email
             email_obj = {
