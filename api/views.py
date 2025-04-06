@@ -113,9 +113,24 @@ class CreateSupplier(APIView):
                 elif field=="person_of_contact" and bool(data.get("person_of_contact")):
                     supplier_obj.person_of_contact = check_string(data.get("person_of_contact"),"Person Of Contact")
                 elif field=="phone_no" and bool(data.get("phone_no")):
-                    supplier_obj.phone_no = check_string(data.get("phone_no"),"Phone No")
+                    phone_no = data.get("phone_no")
+                    # Validate phone number
+                    if not re.match(r'^\+?[0-9-\s]{8,20}$', phone_no):
+                        raise ValidationError("Invalid phone number")
+                    supplier_obj.phone_no = check_string(phone_no,"Phone No")
                 elif field=="email" and bool(data.get("email")):
-                    supplier_obj.email = check_string(data.get("email"),"Email")
+                    email = data.get("email")
+                    # Validate email
+                    try:
+                        validate_email(email)
+                    except ValidationError:
+                        raise ValidationError("Invalid email format")
+                    
+                    # Check if another supplier with this email already exists (excluding current supplier)
+                    if buyer.suppliers.filter(email=email).exclude(id=supplier_id).exists():
+                        raise ValidationError("Another supplier with this email id already exists!")
+                    
+                    supplier_obj.email = check_string(email,"Email")
                 elif field=="categories" and bool(data.get("categories")):
                     categories = data.get("categories")
                     prev_categories = supplier_obj.categories.all()
@@ -139,8 +154,11 @@ class CreateSupplier(APIView):
                     supplier_obj.remark = check_string(data.get("remark"),"Remark")
             supplier_obj.save()
             return Response({"success":True})
+        except ValidationError as ve:
+            return return_400({"success":False,"error":str(ve)})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
+        
 
     def delete(self,request):
         """
@@ -358,7 +376,8 @@ class GetRFQ(APIView):
                 'status',
                 'specifications',
                 'expected_delivery_date',
-                'quotes_count'
+                'quotes_count',
+                'created'
             )
 
             paginator = Paginator(rfq_item_query, limit)
@@ -376,7 +395,8 @@ class GetRFQ(APIView):
                     "status": RequestForQuotationItems.STATUS_CHOICE[item['status']-1][1],
                     "specifications": item['specifications'],
                     "expected_delivery_date": item['expected_delivery_date'].strftime("%d/%b") if item['expected_delivery_date'] else None,
-                    "quotes": item['quotes_count']
+                    "quotes": item['quotes_count'],
+                    "created": item['created'].strftime("%d/%b/%Y")
                 }
                 for item in rfq_items
             ]
@@ -417,7 +437,8 @@ class GetRFQResponsePageData(APIView):
                     "first_name":buyer.user.first_name,
                     "last_name":buyer.user.last_name,
                     "gst_no":buyer.gst_no,
-                    "address": buyer.address
+                    "address": buyer.address,
+                    "currency":buyer.currency,
                 },
                 "supplier":{
                     "supplier_id":supplier.id,
@@ -476,7 +497,7 @@ class BulkImportSuppliers(APIView):
     def validate_columns(self, df):
         missing_columns = set(self.REQUIRED_COLUMNS) - set(df.columns)
         if missing_columns:
-            raise ValidationError(f"Missing required columns: {', '.join(missing_columns)}")
+            raise ValidationError(f"Columns not found in file: {', '.join(missing_columns)}")
         
     def validate_phone_number(self, phone_number):
         # Regex for phone number validation
@@ -523,13 +544,40 @@ class BulkImportSuppliers(APIView):
 
             # Process the dataframe
             with transaction.atomic():
-                for _, row in df.iterrows():
-                    email = row['Email']
-                    phone_no = row['Phone No']
+                for index, row in df.iterrows():
+                    row_num = index + 1
+                     # Extract values
+                    company_name = row.get('Company Name', '')
+                    person_of_contact = row.get('Person Of Contact', '')
+                    email = row.get('Email', '')
+                    phone_no = row.get('Phone No', '')
+                    
+                    # Validate required fields
+                    if not company_name:
+                        raise ValidationError(f"Row {row_num}: Company Name is required")
+                    
+                    if not person_of_contact:
+                        raise ValidationError(f"Row {row_num}: Person Of Contact is required")
+                    
+                    if not email:
+                        raise ValidationError(f"Row {row_num}: Email is required")
+                    
+                    if not phone_no:
+                        raise ValidationError(f"Row {row_num}: Phone No is required")
                     
                     # Validate phone number
-                    self.validate_phone_number(phone_no)
-                    self.validate_email(email)
+                    try:
+                        self.validate_phone_number(phone_no)
+                    except ValidationError as e:
+                        raise ValidationError(f"Row {row_num}: {str(e)}")
+                    
+                    # Validate email
+                    try:
+                        self.validate_email(email)
+                    except ValidationError as e:
+                        raise ValidationError(f"Row {row_num}: {str(e)}")
+
+
 
                     if not Supplier.objects.filter(email=email, buyer = buyer).exists():
                         supplier_obj = Supplier(buyer=buyer)
@@ -577,56 +625,120 @@ class GetMetaData(APIView):
 
 class GetSuppliers(APIView):
     """
-        Create RFQ API With Support of:
-        1. GET => To all suppliers associated buyer
+        API to get all suppliers associated with a buyer
+        1. GET => To retrieve all suppliers associated with the buyer
     """
     permission_classes = (IsAuthenticated,)
-    def get(self,request):
+    def get(self, request):
         try:
             buyer = request.user.buyer
-            search = request.GET.get("q","")
-            suppliers = buyer.suppliers.all()
+            search = request.GET.get("q", "")
+            
+            # Get all suppliers for the buyer
+            all_suppliers = buyer.suppliers.all()
+            
+            # Define time thresholds
+            now = datetime.now()
+            recent_supplier_threshold = now - timedelta(hours=1)  # Suppliers added in the last hour
+            recent_rfq_threshold = now - timedelta(days=5)        # RFQs from the last 5 days
+            
+            # Create a dictionary to track processed suppliers
+            processed_suppliers = {}
+            result_data = []
+            
+            # STEP 1: First prioritize very recently added suppliers (last hour)
+            recent_suppliers = all_suppliers.filter(created__gte=recent_supplier_threshold).order_by('-created')
+            
             if search:
-                suppliers = suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
-            gte_date = datetime.now() - timedelta(days=5)
-            rfq_list = RequestForQuotation.objects.filter(created__gte=gte_date, buyer = buyer).order_by('-created')
-
-            data = []
-            supplier_added = {}
+                recent_suppliers = recent_suppliers.filter(
+                    Q(company_name__icontains=search) |
+                    Q(person_of_contact__icontains=search) |
+                    Q(phone_no__icontains=search) |
+                    Q(email__icontains=search)
+                )
+                
+            for supplier in recent_suppliers:
+                result_data.append({
+                    "supplier_id": supplier.id,
+                    "company": supplier.company_name,
+                    "person": supplier.person_of_contact,
+                    "phone": supplier.phone_no,
+                    "email": supplier.email,
+                    "categories": [
+                        {"category_id": category.id, "category_name": category.name} 
+                        for category in supplier.categories.filter(active=True)
+                    ],
+                    "remark": supplier.remark
+                })
+                processed_suppliers[supplier.id] = True
+            
+            # STEP 2: Then process suppliers from recent RFQs
+            rfq_list = RequestForQuotation.objects.filter(
+                created__gte=recent_rfq_threshold, 
+                buyer=buyer
+            ).order_by('-created')
+            
             for rfq in rfq_list:
-                suppliers_rfq = rfq.suppliers.all()
+                # Filter suppliers based on search query if provided
                 if search:
-                    suppliers_rfq = rfq.suppliers.filter(Q(company_name__icontains=search)|Q(person_of_contact__icontains=search)|Q(phone_no__icontains=search)|Q(email__icontains=search))
+                    suppliers_rfq = rfq.suppliers.filter(
+                        Q(company_name__icontains=search) |
+                        Q(person_of_contact__icontains=search) |
+                        Q(phone_no__icontains=search) |
+                        Q(email__icontains=search)
+                    )
+                else:
+                    suppliers_rfq = rfq.suppliers.all().order_by('-created')
+                
+                # Add each supplier to the result if not already added
                 for supplier in suppliers_rfq:
-                    if not supplier_added.get(supplier.id,False):
-                        sup_dic = {
-                            "supplier_id":supplier.id,
-                            "company":supplier.company_name,
-                            "person":supplier.person_of_contact,
-                            "phone":supplier.phone_no,
-                            "email":supplier.email,
-                            "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
+                    if not processed_suppliers.get(supplier.id, False):
+                        result_data.append({
+                            "supplier_id": supplier.id,
+                            "company": supplier.company_name,
+                            "person": supplier.person_of_contact,
+                            "phone": supplier.phone_no,
+                            "email": supplier.email,
+                            "categories": [
+                                {"category_id": category.id, "category_name": category.name} 
+                                for category in supplier.categories.filter(active=True)
+                            ],
                             "remark": supplier.remark
-                        }
-                        supplier_added[supplier.id] = True
-                        data.append(sup_dic)
-            for supplier in suppliers:
-                if not supplier_added.get(supplier.id,False):
-                    sup_dic = {
-                        "supplier_id":supplier.id,
-                        "company":supplier.company_name,
-                        "person":supplier.person_of_contact,
-                        "phone":supplier.phone_no,
-                        "email":supplier.email,
-                        "categories": [{"category_id":category.id,"category_name":category.name} for category in supplier.categories.filter(active=True).all()],
+                        })
+                        processed_suppliers[supplier.id] = True
+            
+            # STEP 3: Finally process any remaining suppliers
+            if search:
+                remaining_suppliers = all_suppliers.filter(
+                    Q(company_name__icontains=search) |
+                    Q(person_of_contact__icontains=search) |
+                    Q(phone_no__icontains=search) |
+                    Q(email__icontains=search)
+                )
+            else:
+                remaining_suppliers = all_suppliers
+                
+            for supplier in remaining_suppliers:
+                if not processed_suppliers.get(supplier.id, False):
+                    result_data.append({
+                        "supplier_id": supplier.id,
+                        "company": supplier.company_name,
+                        "person": supplier.person_of_contact,
+                        "phone": supplier.phone_no,
+                        "email": supplier.email,
+                        "categories": [
+                            {"category_id": category.id, "category_name": category.name} 
+                            for category in supplier.categories.filter(active=True)
+                        ],
                         "remark": supplier.remark
-                    }
-                    supplier_added[supplier.id] = True
-                    data.append(sup_dic)
-            return Response({"success":True,"data":data})
+                    })
+                    processed_suppliers[supplier.id] = True
+            
+            return Response({"success": True, "data": result_data})
+            
         except Exception as error:
-            return return_400({"success":False,"error":f"{error}"})
-
+            return return_400({"success": False, "error": str(error)})
+        
 class GetSupplierCategories(APIView):
     """
         Create RFQ API With Support of:
@@ -722,6 +834,8 @@ class CreateRFQResponse(APIView):
                 rfq_response = RequestForQuotationItemResponse(request_for_quotation_item=rfq_item,supplier=supplier)
                 rfq_response.quantity = item.get("quantity")
                 rfq_response.price = item.get("price")
+                rfq_response.bought_quantity = item.get("quantity")
+                rfq_response.bought_price = item.get("price")
                 rfq_response.lead_time = item.get("supplier_lead_time")
                 rfq_response.remarks = item.get("supplier_remarks")
                 rfq_response.save()
@@ -770,7 +884,8 @@ class RFQItemData(APIView):
                     "expected_delivery":rfq_item.expected_delivery_date.strftime("%d %b") if rfq_item.expected_delivery_date else None,
                     "terms_and_conditions" : meta_data.terms_conditions,
                     "payment_terms": meta_data.payment_terms,
-                    "shipping_terms": meta_data.shipping_terms
+                    "shipping_terms": meta_data.shipping_terms,
+                    "currency":buyer.currency,
                 },
                 "status": "Closed" if rfq_item.request_for_quotation_item_response.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED).exists() else "Open",
                 "suppliers":[]
@@ -785,9 +900,12 @@ class RFQItemData(APIView):
                         "price":res.price if res else None,
                         "response_id": res.id if res else None,
                         "quantity":res.quantity if res else None,
+                        "bought_quantity":res.bought_quantity if res.bought_quantity else res.quantity if res.quantity else None,
+                        "bought_price":res.bought_price if res.bought_price else res.price if res.price else None,
                         "supplier_lead_time":res.lead_time if res else None,
                         "supplier_remarks":res.remarks if res else None,
-                        "order_status":res.get_order_status_display() if res else None
+                        "order_status":res.get_order_status_display() if res else None,
+                        "created_at":res.created.strftime("%d/%b/%Y") if res else None,
                     })
                     continue
                 else:
@@ -820,6 +938,13 @@ class RFQItemData(APIView):
                 raise Exception("Response ID not provided!")
             response = RequestForQuotationItemResponse.objects.get(id=data.get("response_id"))
             response.order_status = RequestForQuotationItemResponse.ORDER_PLACED
+
+            # Update quantity and price if provided in the request
+            if data.get("bought_quantity"):
+                response.bought_quantity = data.get("bought_quantity")
+            if data.get("bought_price"):
+                response.bought_price = data.get("bought_price")
+            
             response.save()
             rfq_item.status = RequestForQuotationItems.CLOSE
             rfq_item.save()
@@ -833,8 +958,8 @@ class RFQItemData(APIView):
                 Please acknowledge the email to confirm the order.
 
                 Product Name      : {rfq_item.product_name}
-                Price             : ₹{response.price}
-                Quantity          : {response.quantity} {rfq_item.uom}
+                Price             : ₹{response.bought_price}
+                Quantity          : {response.bought_quantity} {rfq_item.uom}
                 Expected Lead Time     : {response.lead_time if response.lead_time else ''}
 
                 Thank you,

@@ -10,6 +10,7 @@ class Buyer(models.Model):
     company_name = models.CharField(max_length = 255, null = True, blank=True)
     gst_no = models.CharField(max_length = 50, null = True, blank=True)
     address = models.CharField(max_length = 255, null = True, blank=True)
+    currency = models.CharField(max_length = 50, null = True, blank=True)
     test_user = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now = True)
@@ -19,7 +20,7 @@ class Supplier(models.Model):
     buyer = models.ForeignKey("api.Buyer",null=True,on_delete=models.SET_NULL,related_name="suppliers")
     company_name = models.TextField(max_length=255)
     person_of_contact = models.CharField(max_length=255)
-    phone_no = models.CharField(max_length=12,null=True, blank=True)
+    phone_no = models.CharField(max_length=200,null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     remark = models.TextField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
@@ -74,7 +75,9 @@ class RequestForQuotationItemResponse(models.Model):
     )
     
     request_for_quotation_item = models.ForeignKey("api.RequestForQuotationItems",null=True,on_delete=models.SET_NULL,related_name="request_for_quotation_item_response")
-    quantity = models.FloatField()
+    quantity = models.FloatField() #moq field
+    bought_price = models.FloatField(null=True, blank=True) #moq field
+    bought_quantity = models.FloatField(null=True, blank=True)
     price = models.FloatField()
     supplier = models.ForeignKey(Supplier,null=True, on_delete=models.SET_NULL,related_name="request_for_quotation_responses") 
     order_status = models.SmallIntegerField(choices = ORDER_STATUS, default=ORDER_PENDING)

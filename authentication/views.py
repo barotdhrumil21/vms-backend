@@ -76,7 +76,8 @@ class GetUserDetailsAPI(APIView):
                     "phone_no":buyer.phone_no,
                     "company_name": buyer.company_name,
                     "gst_no":buyer.gst_no,
-                    "address":buyer.address
+                    "address":buyer.address,
+                    "currency": buyer.currency if hasattr(buyer, 'currency') and buyer.currency else "USD"  # Default to INR if not set
                 }
                 return Response({"success":True, "data":data})
             else:
@@ -105,14 +106,16 @@ class GetUserDetailsAPI(APIView):
                     buyer.gst_no = str(data.get("gst_no"))
                 if data.get("address"):
                     buyer.address = str(data.get("address"))
+                if data.get("currency"):
+                    buyer.currency = str(data.get("currency"))
                 user.save()
                 buyer.save()
                 return Response({"success":True})
             else:
                 return return_400({"success": False, "error":"User details not found."})
         except Exception as error:
-            return return_400({"success":False,"error":f"An unexpected error occured : {error}"})       
-
+            return return_400({"success":False,"error":f"An unexpected error occured : {error}"})
+        
 class SignUpView(APIView):
     def post(self, request):
         try:
