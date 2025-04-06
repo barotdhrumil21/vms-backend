@@ -505,7 +505,7 @@ class BulkImportSuppliers(APIView):
         if not re.match(regex, phone_number):
             raise ValidationError(f"Invalid phone number format: {phone_number}")
 
-    def validate_email(email):
+    def validate_email(self, email):
         """
         Validate an email address.
         """
