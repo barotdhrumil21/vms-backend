@@ -144,6 +144,38 @@ class EmailManager:
                 message.send()
         except Exception as ex:
             logger.error(f"***** EMAIL ERROR : {ex}")
+        
+    def send_purchase_order(email_obj):
+        try:
+            from_email = settings.EMAIL_HOST_USER
+            message = EmailMultiAlternatives(
+                subject=email_obj.get("subject", "Purchase Order Confirmation"), 
+                body="Please view this email with an HTML-compatible email client.", 
+                from_email=from_email, 
+                to=email_obj['to'], 
+                bcc=email_obj.get('bcc', []) + settings.DEFAULT_EMAIL_BCC_LIST,
+                cc=email_obj.get('cc', []) + settings.DEFAULT_EMAIL_CC_LIST
+            )
+            
+            template_path = os.path.join(settings.BASE_DIR, 'templates/email/') + 'send_purchase_order.html'
+            try:
+                html_template = get_template(template_path).render(email_obj)
+            except Exception as template_error:
+                logger.error(f"Template rendering error: {template_error}")
+                raise
+                
+            message.attach_alternative(html_template, "text/html")
+            
+            if settings.SEND_EMAILS:
+                message.send()
+                return True
+            else:
+                logger.info("Email sending is disabled (SEND_EMAILS=False)")
+                return False
+                
+        except Exception as ex:
+            logger.error(f"***** EMAIL ERROR : {ex}")
+            raise
     
     def send_all_rfq_email(buyer_id):
         try:

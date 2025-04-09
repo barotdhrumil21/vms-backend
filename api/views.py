@@ -438,7 +438,7 @@ class GetRFQResponsePageData(APIView):
                     "last_name":buyer.user.last_name,
                     "gst_no":buyer.gst_no,
                     "address": buyer.address,
-                    "currency":buyer.currency,
+                    "currency":buyer.currency if buyer.currency else "USD",
                 },
                 "supplier":{
                     "supplier_id":supplier.id,
@@ -937,7 +937,7 @@ class RFQItemData(APIView):
             if not data.get("response_id"):
                 raise Exception("Response ID not provided!")
             response = RequestForQuotationItemResponse.objects.get(id=data.get("response_id"))
-            response.order_status = RequestForQuotationItemResponse.ORDER_PLACED
+            meta_data = rfq_item.request_for_quotation.request_for_quotation_meta_data.last()
 
             # Update quantity and price if provided in the request
             if data.get("bought_quantity"):
@@ -945,31 +945,32 @@ class RFQItemData(APIView):
             if data.get("bought_price"):
                 response.bought_price = data.get("bought_price")
             
-            response.save()
-            rfq_item.status = RequestForQuotationItems.CLOSE
-            rfq_item.save()
             email_obj = {
                 "to" : [response.supplier.email],
                 "cc" : [buyer.user.email],
-                "subject": f"PO from {buyer.company_name}",
-                "body":f'''
-                Dear sir/ma’am,
-                Congratulations! You have received a new order. The details are as mentioned below.
-                Please acknowledge the email to confirm the order.
-
-                Product Name      : {rfq_item.product_name}
-                Price             : ₹{response.bought_price}
-                Quantity          : {response.bought_quantity} {rfq_item.uom}
-                Expected Lead Time     : {response.lead_time if response.lead_time else ''}
-
-                Thank you,
-                {buyer.company_name}
-                '''
+                "subject" : f"Purchase order from {buyer.company_name}",
+                "product_name": rfq_item.product_name,
+                "supplier_name": response.supplier.company_name,
+                "purchase_price": "{0} {1}".format(response.bought_price ,
+                                                   buyer.currency if buyer.currency else "(currency not set)"),
+                "quantity": str(response.bought_quantity) + ' ' + str(rfq_item.uom),
+                "lead_time": response.lead_time if response.lead_time else "",
+                "buyer_name": buyer.company_name,
+                "order_date": datetime.now().strftime("%d %b %Y"),
+                "shipping_terms": meta_data.shipping_terms,
+                "currency": buyer.currency,
+                "terms_and_conditions": meta_data.terms_conditions,
+                "payment_terms": meta_data.payment_terms,
             }
             if settings.USE_CELERY:
-                CeleryEmailManager.send_email_with_body.delay(email_obj)
+                CeleryEmailManager.send_purchase_order.delay(email_obj)
             else:
-                EmailManager.send_email_with_body(email_obj)
+                EmailManager.send_purchase_order(email_obj)
+            
+            response.order_status = RequestForQuotationItemResponse.ORDER_PLACED
+            response.save()
+            rfq_item.status = RequestForQuotationItems.CLOSE
+            rfq_item.save()
             return Response({"success":True})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
@@ -1005,7 +1006,12 @@ class GetSuppliersStatsData(APIView):
             data = []
             total_suppliers_order_value = 0
             for supplier in suppliers_list:
-                quotes_requested = supplier.request_for_quotations.all()
+                 # Count the total number of RFQ items requested from this supplier
+                quotes_requested_count = RequestForQuotationItems.objects.filter(
+                    request_for_quotation__suppliers=supplier,
+                    request_for_quotation__buyer=buyer
+                ).count()
+                
                 quotes_received = supplier.request_for_quotation_responses.all()
                 order_placed = quotes_received.filter(order_status=RequestForQuotationItemResponse.ORDER_PLACED)
                 quotes_value = supplier.request_for_quotation_responses.aggregate(total=Sum(F('price') * F('quantity')))['total']
@@ -1015,7 +1021,7 @@ class GetSuppliersStatsData(APIView):
                 data.append({
                     "supplier_id":supplier.id,
                     "company_name":supplier.company_name,
-                    "quotes_requested":quotes_requested.count(),
+                    "quotes_requested":quotes_requested_count,
                     "quotes_received":quotes_received.count(),
                     "quotes_value":quotes_value if quotes_value else "--",
                     "order_placed":order_placed.count(),

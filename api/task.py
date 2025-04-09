@@ -32,5 +32,7 @@ class CeleryEmailManager:
     def send_rfq_reminder(email_obj):
         EmailManager.send_rfq_reminder(email_obj)
 
-        
+    @app.task(queue="email_queue")
+    def send_purchase_order(email_obj):
+        EmailManager.send_purchase_order(email_obj)   
         
