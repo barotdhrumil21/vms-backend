@@ -12,9 +12,9 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import TemporaryUploadedFile
 import re
-from api.models import Buyer, Supplier,RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
+from api.models import Buyer, Supplier, RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
 from api.helper import check_string
-from django.db.models import Count, Avg, Sum, F, ExpressionWrapper, FloatField, Q, DurationField
+from django.db.models import Count, Avg, Sum, F, ExpressionWrapper, FloatField, Q, DurationField, Case, When, Value
 from datetime import datetime, timedelta
 from django.db import transaction
 from api.task import CeleryEmailManager
@@ -1168,13 +1168,18 @@ class DashboardStats(APIView):
                 supplier_count=Count('supplier', distinct=True)
             ).values('request_for_quotation_item__product_name', 'supplier_count')
 
-            # 2.4 Suppliers by response%
+            # 2.4 Suppliers by response% - FIXED: add condition to avoid division by zero
             suppliers_response = suppliers.annotate(
                 total_rfqs=Count('request_for_quotations'),
                 responded_rfqs=Count('request_for_quotation_responses')
             ).annotate(
-                response_rate=ExpressionWrapper(
-                    F('responded_rfqs') * 100.0 / F('total_rfqs'),
+                response_rate=Case(
+                    When(total_rfqs__gt=0, 
+                         then=ExpressionWrapper(
+                             F('responded_rfqs') * 100.0 / F('total_rfqs'),
+                             output_field=FloatField()
+                         )),
+                    default=Value(0.0),
                     output_field=FloatField()
                 )
             )
@@ -1195,18 +1200,25 @@ class DashboardStats(APIView):
                 )
             ).exclude(avg_lead_time__isnull=True).order_by('avg_lead_time').values('company_name', 'avg_lead_time')
 
-
-
+            # FIXED: calculate percentages safely, avoiding division by zero
             total_purchase_count = sum(item['count'] for item in supplier_purchases)
+            
             for item in supplier_purchases:
-                item['count_percentage'] = (item['count'] / total_purchase_count) * 100 if total_purchase_count else 0
-                item['value_percentage'] = (item['value'] / total_purchase_value) * 100 if total_purchase_value else 0
+                if total_purchase_count > 0:
+                    item['count_percentage'] = (item['count'] / total_purchase_count) * 100
+                else:
+                    item['count_percentage'] = 0.0
+                    
+                if total_purchase_value > 0:
+                    item['value_percentage'] = (item['value'] / total_purchase_value) * 100
+                else:
+                    item['value_percentage'] = 0.0
 
             response_data = {
                 "rfqs": {
                     "open_rfqs_count": open_rfqs_count,
                     "total_rfqs_count": total_rfqs_count,
-                    "average_item_sla_in_hours": avg_sla.total_seconds() / 3600 if avg_sla else None,  # in hours
+                    "average_item_sla_in_hours": avg_sla.total_seconds() / 3600 if avg_sla else 0,  # FIXED: return 0 instead of None
                     "rfqs_by_product": list(rfqs_by_product),
                     "total_purchase_value": total_purchase_value
                 },
@@ -1229,8 +1241,13 @@ class DashboardStats(APIView):
             return Response({"success": True, "data": response_data})
 
         except Exception as error:
-            return return_400({"success": False, "error": str(error)})
-
+            # Log the error for debugging purposes
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Dashboard stats error: {str(error)}")
+            
+            # Return a more informative error response
+            return return_400({"success": False, "error": str(error), "message": "Error generating dashboard statistics"})
 def TestEmail(request):
     obj={
         'items': [
