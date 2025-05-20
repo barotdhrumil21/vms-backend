@@ -3,7 +3,10 @@ import logging
 from django.http import HttpResponse
 from rest_framework_simplejwt.tokens import RefreshToken
 
+# Set logging level to INFO to suppress DEBUG logs
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 def return_400(data, request=None):
     response = HttpResponse(json.dumps(data), content_type='application/json')
     response.status_code = 400

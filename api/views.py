@@ -24,7 +24,11 @@ from django.core.paginator import Paginator
 from django.utils import timezone
 from django.db.models.functions import Cast
 from django.core.validators import validate_email
+import logging
 
+# Set logging level to INFO to suppress DEBUG logs
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class CreateSupplier(APIView):
     """

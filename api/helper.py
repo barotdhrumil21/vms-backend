@@ -8,7 +8,9 @@ import logging
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
+# Set logging level to INFO to suppress DEBUG logs
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def check_string(string,variable_name=None):
     pattern = r"^[a-zA-Z0-9\s_.,%'-@]*$"

@@ -192,6 +192,13 @@ SEND_EMAILS = True
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR,"media")
 
+CALCOM_API_KEY = "cal_live_9f77cbdc001a94d1a4608fda01cc20d8"
+CALCOM_ENABLE_AUTO_BOOKING = False
+CALCOM_EVENT_TYPE_ID = "auravms-demo"  # This is a slug, not a numeric ID
+CALCOM_USERNAME = "dhrumil-barot-xfhmld"  # Required when using eventTypeSlug
+# Cal.com Integration Settings - Updated for correct event type ID
+DEBUG_CALCOM = True  # Set to True for detailed Cal.com integration logging
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

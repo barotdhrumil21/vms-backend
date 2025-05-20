@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import authenticate
-import json,base64
+import json, base64, logging
 from api.helper import check_string
 from django.conf import settings
 from authentication.utils import return_400, get_tokens_for_user
@@ -14,6 +14,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.helper import EmailManager
 from api.task import CeleryEmailManager
 from datetime import datetime, timedelta
+from api.calcom_helper import schedule_calcom_booking
+from django.utils import timezone  # Add this import at the top
 
 # Create your views here.
 
@@ -120,17 +122,32 @@ class SignUpView(APIView):
     def post(self, request):
         try:
             data = request.data
-            email = data.get("email").lower()
-            phone_no = data.get("phone_no")
-            password = data.get("password")
-            company_name = data.get("company_name")
+            email = data.get("email", "").lower()
+            phone_no = data.get("phone_no", "")
+            password = data.get("password", "")
+            company_name = data.get("company_name", "")
+            
+            # Validate required fields
+            if not all([email, phone_no, password]):
+                return Response({
+                    "success": False, 
+                    "message": "Email, phone number and password are required"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             if User.objects.filter(username=email).exists():
-                return Response({"success": False, "message": "User with this email already exists"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "success": False, 
+                    "message": "User with this email already exists"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-            user = User.objects.create_user(username=email, email=email, password=password)
-            renews_at = datetime.now() + timedelta(days=45)
-            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no, company_name = company_name)
+            user = User.objects.create_user(
+                username=email, 
+                email=email, 
+                password=password,
+            )
+            # Make the date timezone-aware to fix the warning
+            renews_at = timezone.now() + timedelta(days=45)
+            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no, company_name=company_name)
 
             # Send welcome email
             email_obj = {
@@ -139,41 +156,101 @@ class SignUpView(APIView):
                 "bcc": ["barotdhrumil21@gmail.com"],
                 "subject": "Welcome to AuraVMS",
                 "username": email,
-                "password":password
+                "password": password
             }
-            if settings.USE_CELERY:
-                CeleryEmailManager.new_user_signup.delay(email_obj)
-            else:
-                EmailManager.new_user_signup(email_obj)
+            try:
+                if settings.USE_CELERY:
+                    CeleryEmailManager.new_user_signup.delay(email_obj)
+                else:
+                    EmailManager.new_user_signup(email_obj)
+            except Exception as email_error:
+                logging.error(f"Failed to send welcome email to {email}: {email_error}")
+
+            # Schedule a Cal.com booking for demo
+            if getattr(settings, 'CALCOM_ENABLE_AUTO_BOOKING', False):
+                try:
+                    logging.info(f"Attempting to create Cal.com booking for {email}")
+                    # Check if API key is present and properly formatted
+                    api_key = getattr(settings, 'CALCOM_API_KEY', '').strip()
+                    if not api_key:
+                        logging.error("Cal.com API key not configured or empty")
+                    
+                    # Check for event type ID configuration
+                    event_type = getattr(settings, 'CALCOM_EVENT_TYPE_ID', '')
+                    if not event_type:
+                        logging.error("Cal.com event type ID not configured")
+                        
+                    # Log the API key being used (mask it for security)
+                    masked_key = f"{'*' * (len(api_key)-4)}{api_key[-4:]}" if api_key else "None"
+                    logging.info(f"Using Cal.com API key ending in: {api_key[-4:] if api_key else 'None'}")
+                    
+                    # Format name for booking
+                    user_name = f"{data.get('first_name', '')} {data.get('last_name', '')}"
+                    if not user_name.strip():
+                        user_name = email.split('@')[0]
+                    
+                    booking_result = schedule_calcom_booking(
+                        user_email=email,
+                        phone_number=phone_no,
+                        user_name=user_name
+                    )
+                    
+                    # Log detailed result
+                    if booking_result.get('success'):
+                        logging.info(f"Cal.com booking created successfully for {email}")
+                    else:
+                        logging.error(f"Failed to create Cal.com booking for {email}: {booking_result.get('error')}")
+                        # Send notification about booking failure if needed
+                        if settings.DEBUG_CALCOM:
+                            email_obj = {
+                                "to": ["barotdhrumil21@gmail.com"],
+                                "subject": f"[DEBUG] Cal.com booking failed for {email}",
+                                "message": f"Error: {booking_result.get('error')}"
+                            }
+                            try:
+                                EmailManager().send_email(email_obj)
+                            except:
+                                logging.error("Failed to send Cal.com error notification")
+                except Exception as cal_error:
+                    logging.exception(f"Exception in Cal.com booking for {email}: {cal_error}")
 
             # Authenticate user and generate tokens
             authenticated_user = authenticate(username=email, password=password)
-            refresh = RefreshToken.for_user(authenticated_user)
-
-            return Response({
-                "success": True,
-                "message": "User created successfully",
-                "access_token": str(refresh.access_token),
-                "refresh_token": str(refresh),
-                "user": {
-                    "email": authenticated_user.email,
-                    "username": authenticated_user.username,
-                    "phone":phone_no
-                }
-            }, status=status.HTTP_201_CREATED)
+            if authenticated_user:
+                refresh = RefreshToken.for_user(authenticated_user)
+                return Response({
+                    "success": True,
+                    "message": "User created successfully",
+                    "access_token": str(refresh.access_token),
+                    "refresh_token": str(refresh),
+                    "user": {
+                        "email": authenticated_user.email,
+                        "username": authenticated_user.username,
+                        "phone": phone_no
+                    }
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    "success": True,
+                    "message": "User created but login failed. Please login separately."
+                }, status=status.HTTP_201_CREATED)
 
         except Exception as error:
-            print(error)
+            logging.exception(f"User creation failed: {error}")
             email_obj = {
                 "to": ["barotdhrumil21@gmail.com"],
                 "cc": [],
                 "bcc": [""],
                 "subject": "[ALERT] USER CREATION FAILED",
-                "username": email,
+                "username": data.get("email", "unknown_email"),
                 "error": str(error)
             }
-            if settings.USE_CELERY:
-                CeleryEmailManager.user_create_failed.delay(email_obj)
-            else:
-                EmailManager.user_create_failed(email_obj)
-            return Response({"success": False, "message": "User creation failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            try:
+                if settings.USE_CELERY:
+                    CeleryEmailManager.user_create_failed.delay(email_obj)
+                else:
+                    EmailManager.user_create_failed(email_obj)
+            except Exception as email_error:
+                logging.error(f"Failed to send error notification: {email_error}")
+                
+            return Response({"success": False, "message": f"User creation failed: {str(error)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
