@@ -8,3 +8,4 @@ db.sqlite3
 media
 .DS_Store
 vmsdashboard-celery-email.conf
+venv
