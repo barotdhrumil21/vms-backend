@@ -19,7 +19,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           source: "."
-          target: "/home/ubuntu/vms-backend"
+          target: "/home/ubuntu/vmsbackend-2"
 
       - name: Run deploy commands on EC2
         uses: appleboy/ssh-action@master
@@ -28,10 +28,11 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd /home/ubuntu/vms-backend
-            source venv/bin/activate
+            cd /home/ubuntu/vmsbackend-2
+            source ../venv/bin/activate
             pip install -r requirements.txt
             python manage.py migrate
             python manage.py collectstatic --noinput
             sudo systemctl restart gunicorn
             sudo systemctl restart nginx
+
