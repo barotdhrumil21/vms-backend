@@ -13,6 +13,7 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from api.helper import EmailManager
 from api.task import CeleryEmailManager
+from api.ab_testing import pick_subscription_variant, calculate_initial_expiry
 from datetime import datetime, timedelta
 from api.calcom_helper import schedule_calcom_booking
 from django.utils import timezone  # Add this import at the top
@@ -72,14 +73,15 @@ class GetUserDetailsAPI(APIView):
             buyer = user.buyer
             if user and buyer:
                 data = {
-                    "first_name":user.first_name,
-                    "last_name":user.last_name,
-                    "email":user.email,
-                    "phone_no":buyer.phone_no,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "email": user.email,
+                    "phone_no": buyer.phone_no,
                     "company_name": buyer.company_name,
-                    "gst_no":buyer.gst_no,
-                    "address":buyer.address,
-                    "currency": buyer.currency if hasattr(buyer, 'currency') and buyer.currency else "USD"  # Default to INR if not set
+                    "gst_no": buyer.gst_no,
+                    "address": buyer.address,
+                    "currency": buyer.currency if hasattr(buyer, "currency") and buyer.currency else "USD",
+                    "timezone": buyer.timezone if hasattr(buyer, "timezone") and buyer.timezone else "Asia/Kolkata",
                 }
                 return Response({"success":True, "data":data})
             else:
@@ -110,6 +112,8 @@ class GetUserDetailsAPI(APIView):
                     buyer.address = str(data.get("address"))
                 if data.get("currency"):
                     buyer.currency = str(data.get("currency"))
+                if data.get("timezone"):
+                    buyer.timezone = str(data.get("timezone"))
                 user.save()
                 buyer.save()
                 return Response({"success":True})
@@ -145,9 +149,18 @@ class SignUpView(APIView):
                 email=email, 
                 password=password,
             )
-            # Make the date timezone-aware to fix the warning
-            renews_at = timezone.now() + timedelta(days=45)
-            Buyer.objects.create(user=user, subscription_expiry_date=renews_at, test_user=False, phone_no=phone_no, company_name=company_name)
+            variant = pick_subscription_variant(email)
+            subscription_expiry = calculate_initial_expiry(variant)
+            buyer_timezone = data.get("timezone") or "Asia/Kolkata"
+            Buyer.objects.create(
+                user=user,
+                subscription_expiry_date=subscription_expiry,
+                test_user=False,
+                phone_no=phone_no,
+                company_name=company_name,
+                onboarding_variant=variant,
+                timezone=buyer_timezone,
+            )
 
             # Send welcome email
             email_obj = {

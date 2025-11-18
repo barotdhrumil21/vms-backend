@@ -1,34 +1,182 @@
 import random
 import string
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.conf import settings
-from authentication.utils import return_400
-from django.contrib.auth.models import User
+import hashlib
+import mimetypes
 import pandas as pd
-import io, os
-from rest_framework.parsers import MultiPartParser, FormParser
+import io
+import os
+import re
+from datetime import datetime, timedelta
+
+from django.conf import settings
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import TemporaryUploadedFile
-import re
-from api.models import Buyer, Supplier, RequestForQuotation, RequestForQuotationItems, RequestForQuotationMetaData, SupplierCategory, RequestForQuotationItemResponse
-from api.helper import check_string
-from django.db.models import Count, Avg, Sum, F, ExpressionWrapper, FloatField, Q, DurationField, Case, When, Value
-from datetime import datetime, timedelta
-from django.db import transaction
-from api.task import CeleryEmailManager
-from .helper import EmailManager
-from django.shortcuts import render
 from django.core.paginator import Paginator
-from django.utils import timezone
-from django.db.models.functions import Cast
 from django.core.validators import validate_email
+from django.db import transaction
+from django.db.models import (
+    Count,
+    Avg,
+    Sum,
+    F,
+    ExpressionWrapper,
+    FloatField,
+    Q,
+    DurationField,
+    Case,
+    When,
+    Value,
+    Max,
+    Min,
+    IntegerField,
+)
+from django.db.models.functions import Cast, Coalesce, Greatest
+from django.http import FileResponse
+from django.shortcuts import render
+from django.utils import timezone
+from django.utils.text import get_valid_filename
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from uuid import UUID
+
+from authentication.utils import return_400
+from api.helper import check_string
+from api.ab_testing import pick_subscription_variant, calculate_initial_expiry
+from api.models import (
+    AuditLog,
+    Buyer,
+    Supplier,
+    RequestForQuotation,
+    RequestForQuotationItems,
+    RequestForQuotationMetaData,
+    SupplierCategory,
+    RequestForQuotationItemResponse,
+    RFQItemAttachment,
+)
+from api.task import CeleryEmailManager
+from .helper import EmailManager, format_date_for_timezone, get_buyer_timezone
+
+try:
+    import magic  # type: ignore
+except ImportError:
+    magic = None
+
 import logging
 
 # Set logging level to INFO to suppress DEBUG logs
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+ALLOWED_ATTACHMENT_EXTENSIONS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+}
+
+ALLOWED_ATTACHMENT_MIME_TYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "image/png",
+    "image/jpeg",
+}
+
+
+def _sanitize_filename(filename: str) -> str:
+    if not filename:
+        return "attachment"
+    return get_valid_filename(filename)
+
+
+def _compute_checksum(uploaded_file) -> str:
+    sha256 = hashlib.sha256()
+    for chunk in uploaded_file.chunks():
+        sha256.update(chunk)
+    uploaded_file.seek(0)
+    return sha256.hexdigest()
+
+
+def _get_client_ip(request) -> str:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+def _create_audit_log(user, action: str, resource_type: str, resource_id: str, request, details=None):
+    try:
+        AuditLog.objects.create(
+            user=user,
+            action=action,
+            resource_type=resource_type,
+            resource_id=str(resource_id),
+            details=details or {},
+            ip_address=_get_client_ip(request),
+        )
+    except Exception as audit_error:
+        logger.warning("Failed to create audit log: %s", audit_error)
+
+
+def _validate_file_extension(filename: str):
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
+        raise ValidationError("Unsupported file extension.")
+
+
+def _detect_mime_type(uploaded_file) -> str:
+    if magic:
+        try:
+            mime = magic.Magic(mime=True)
+            uploaded_file.seek(0)
+            detected = mime.from_buffer(uploaded_file.read(2048))
+            uploaded_file.seek(0)
+            if detected:
+                return detected
+        except Exception as error:
+            logger.warning("python-magic detection failed: %s", error)
+            uploaded_file.seek(0)
+    guessed, _ = mimetypes.guess_type(uploaded_file.name)
+    return guessed or "application/octet-stream"
+
+
+def _validate_mime_type(uploaded_file):
+    detected = _detect_mime_type(uploaded_file)
+    if detected not in ALLOWED_ATTACHMENT_MIME_TYPES:
+        raise ValidationError("Unsupported file type.")
+    return detected
+
+
+def _scan_for_viruses_if_enabled(uploaded_file):
+    if not getattr(settings, "RFQ_ATTACHMENT_VIRUS_SCAN_ENABLED", False):
+        return
+    # Placeholder for AV integration
+    logger.warning("Virus scanning is enabled but not configured. Skipping scan.")
+
+
+def _parse_expected_delivery_date(raw_value):
+    if not raw_value:
+        return None
+    if isinstance(raw_value, datetime):
+        return raw_value.date()
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(cleaned, fmt).date()
+            except ValueError:
+                continue
+    raise ValidationError("Invalid expected delivery date format.")
 
 class CreateSupplier(APIView):
     """
@@ -193,13 +341,19 @@ class CreateUser(APIView):
             if event == "subscription_updated":
 
                 email = data.get("data").get("attributes").get("user_email").lower()
-                # user_name = data.get("data").get("attributes").get("user_name")
                 renews_at = datetime.fromisoformat(data.get("data").get("attributes").get("renews_at").replace("Z", "+00:00"))
                 test_mode = True if data.get("meta").get("test_mode") == "true" else False
+                variant = Buyer.OnboardingVariant.PAYWALL_FIRST
+
                 if not User.objects.filter(username=email).exists():
                     password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                     user = User.objects.create_user(username=email, email=email, password=password)
-                    Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode)
+                    Buyer.objects.create(
+                        user=user,
+                        subscription_expiry_date=renews_at,
+                        test_user=test_mode,
+                        onboarding_variant=variant,
+                    )
 
                     email_obj = {
                         "to": [email],
@@ -214,9 +368,10 @@ class CreateUser(APIView):
                     else:
                         EmailManager.new_user_signup(email_obj)
                 else:
-                    buyer = Buyer.objects.get(user=User.objects.get(username=email))
+                    buyer = Buyer.objects.select_related("user").get(user__username=email)
                     buyer.subscription_expiry_date = renews_at
-                    buyer.save()
+                    buyer.onboarding_variant = variant
+                    buyer.save(update_fields=["subscription_expiry_date", "onboarding_variant"])
             return Response({"success":True})  
         except Exception as error:
             print(error)
@@ -242,13 +397,20 @@ class FramerCreateUser(APIView):
         try:
             data = request.data
             email = data.get("Email").lower()
-            phone = data.get("Phone Number").lower()
+            phone = (data.get("Phone Number") or "").lower()
             test_mode = False
-            renews_at = datetime.now() + timedelta(days=45)
+            variant = pick_subscription_variant(email)
+            renews_at = calculate_initial_expiry(variant)
             if not User.objects.filter(username=email).exists():
                 password = data.get("Password")
                 user = User.objects.create_user(username=email, email=email, password=password)
-                Buyer.objects.create(user=user, subscription_expiry_date = renews_at, test_user = test_mode, phone_no=phone)
+                Buyer.objects.create(
+                    user=user,
+                    subscription_expiry_date=renews_at,
+                    test_user=test_mode,
+                    phone_no=phone,
+                    onboarding_variant=variant,
+                )
 
                 email_obj = {
                     "to": [email],
@@ -293,36 +455,65 @@ class CreateRFQ(APIView):
         """
         try:
             data = request.data
-            items = data.get("items")
-            suppliers = data.get("suppliers")
+            title = (data.get("title") or "").strip()
+            if not title:
+                raise ValidationError("RFQ title is required.")
+
+            items = data.get("items") or []
+            if not isinstance(items, list) or len(items) == 0:
+                raise ValidationError("At least one RFQ item is required.")
+
+            suppliers = data.get("suppliers") or []
             terms_and_condition = data.get("terms_and_condition")
             payment_terms = data.get("payment_terms")
             shipping_terms = data.get("shipping_terms")
             buyer = request.user.buyer
-            rfq = RequestForQuotation(buyer=buyer)
+
+            rfq = RequestForQuotation(buyer=buyer, title=title)
             rfq.save()
+
             meta_data = {
-                "terms_conditions" : str(terms_and_condition) if terms_and_condition else None,
-                "payment_terms" : str(payment_terms) if payment_terms else None,
-                "shipping_terms" : str(shipping_terms) if shipping_terms else None
+                "terms_conditions": str(terms_and_condition).strip() if terms_and_condition else None,
+                "payment_terms": str(payment_terms).strip() if payment_terms else None,
+                "shipping_terms": str(shipping_terms).strip() if shipping_terms else None,
             }
-            RequestForQuotationMetaData(**meta_data,request_for_quotation = rfq).save()
-            for item in items:
-                rfq_item = RequestForQuotationItems(request_for_quotation = rfq)
-                rfq_item.product_name = str(item.get("product_name"))
-                rfq_item.quantity = float(item.get("quantity"))
-                rfq_item.uom = str(item.get("uom"))
-                rfq_item.specifications = str(item.get("specifications")) if item.get("specifications") else ""
-                rfq_item.expected_delivery_date = datetime.strptime(item.get("expected_delivery_date"),"%d/%m/%Y")
+            RequestForQuotationMetaData(**meta_data, request_for_quotation=rfq).save()
+
+            created_items = []
+            for index, item in enumerate(items, start=1):
+                product_name = (item.get("product_name") or "").strip()
+                quantity = item.get("quantity")
+                uom = (item.get("uom") or "").strip()
+                specifications = (item.get("specifications") or "").strip()
+                if not product_name or quantity is None:
+                    raise ValidationError("Each item must include product_name and quantity.")
+
+                rfq_item = RequestForQuotationItems(
+                    request_for_quotation=rfq,
+                    product_name=product_name,
+                    quantity=float(quantity),
+                    uom=uom,
+                    specifications=specifications,
+                )
+                rfq_item.expected_delivery_date = _parse_expected_delivery_date(item.get("expected_delivery_date"))
                 rfq_item.save()
+
+                created_items.append(
+                    {
+                        "id": rfq_item.id,
+                        "index": index,
+                        "product_name": product_name,
+                    }
+                )
+
             email_obj = {
                 "to": [],
-                "cc":[],
-                "bcc":[],
-                "subject":f"New Quotation Requested From {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
-                "items":items,
-                "rfq_id" : rfq.id,
-                "total_no_of_items":len(items)
+                "cc": [],
+                "bcc": [],
+                "subject": f"New Quotation Requested From {rfq.buyer.company_name if rfq.buyer.company_name else rfq.buyer.user.first_name} ",
+                "items": items,
+                "rfq_id": rfq.id,
+                "total_no_of_items": len(items),
             }
             for supplier in suppliers:
                 sup = buyer.suppliers.filter(id=supplier)
@@ -337,9 +528,422 @@ class CreateRFQ(APIView):
                         CeleryEmailManager.send_rfq_created_email.delay(email_obj)
                     else:
                         EmailManager.send_rfq_created_email(email_obj)
-            return Response({"success":True})  
+            return Response({"success": True, "rfq_id": rfq.id, "created_items": created_items})
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
+
+
+class GetRFQList(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        try:
+            buyer = request.user.buyer
+            search = (request.GET.get("q") or "").strip()
+            status_filter = (request.GET.get("status") or "").lower()
+            response_state = (request.GET.get("response_state") or "").lower()
+            sort = (request.GET.get("sort") or "created_desc").lower()
+            page = int(request.GET.get("page", 1))
+            limit = int(request.GET.get("limit", 10))
+
+            rfqs = (
+                RequestForQuotation.objects.filter(buyer=buyer)
+                .annotate(
+                    item_count=Count("request_for_quotation_items", distinct=True),
+                    open_item_count=Count(
+                        "request_for_quotation_items",
+                        filter=Q(request_for_quotation_items__status=RequestForQuotationItems.OPEN),
+                        distinct=True,
+                    ),
+                    quotes_count=Count(
+                        "request_for_quotation_items__request_for_quotation_item_response",
+                        distinct=True,
+                    ),
+                    latest_item_update=Max("request_for_quotation_items__updated"),
+                    latest_response_update=Max("request_for_quotation_items__request_for_quotation_item_response__updated"),
+                    earliest_delivery_date=Min("request_for_quotation_items__expected_delivery_date"),
+                )
+                .annotate(
+                    latest_activity=Greatest(
+                        Coalesce("latest_item_update", "updated"),
+                        Coalesce("latest_response_update", "updated"),
+                        "updated",
+                    )
+                )
+            )
+
+            if search:
+                search_filter = (
+                    Q(title__icontains=search)
+                    | Q(request_for_quotation_items__product_name__icontains=search)
+                    | Q(suppliers__company_name__icontains=search)
+                )
+                if search.isdigit():
+                    search_filter |= Q(id=int(search))
+                rfqs = rfqs.filter(search_filter)
+
+            if status_filter == "open":
+                rfqs = rfqs.filter(open_item_count__gt=0)
+            elif status_filter == "closed":
+                rfqs = rfqs.filter(open_item_count=0)
+
+            if response_state == "pending":
+                rfqs = rfqs.filter(quotes_count=0)
+            elif response_state == "responded":
+                rfqs = rfqs.filter(quotes_count__gt=0)
+
+            rfqs = rfqs.distinct()
+
+            sort_map = {
+                "latest_activity": "-latest_activity",
+                "created_desc": "-created",
+                "created_asc": "created",
+                "delivery_date_asc": "earliest_delivery_date",
+                "delivery_date_desc": "-earliest_delivery_date",
+                "title": "title",
+            }
+            rfqs = rfqs.order_by(sort_map.get(sort, "-latest_activity"))
+
+            paginator = Paginator(rfqs, limit)
+            page_obj = paginator.get_page(page)
+
+            serialized = [
+                {
+                    "id": rfq.id,
+                    "title": rfq.get_display_title(),
+                    "item_count": rfq.item_count,
+                    "open_item_count": rfq.open_item_count,
+                    "quotes_count": rfq.quotes_count,
+                    "latest_activity": rfq.latest_activity.isoformat() if rfq.latest_activity else None,
+                    "created": rfq.created.isoformat(),
+                    "updated": rfq.updated.isoformat(),
+                    "status": "open" if rfq.open_item_count > 0 else "closed",
+                    "earliest_delivery_date": rfq.earliest_delivery_date.isoformat()
+                    if rfq.earliest_delivery_date
+                    else None,
+                }
+                for rfq in page_obj.object_list
+            ]
+
+            item_summary = RequestForQuotationItems.objects.filter(
+                request_for_quotation__buyer=buyer
+            ).aggregate(
+                total_items=Count("id"),
+                open_items=Count("id", filter=Q(status=RequestForQuotationItems.OPEN)),
+                total_quotes=Count("request_for_quotation_item_response", distinct=True),
+            )
+
+            meta = {
+                "page": page_obj.number,
+                "page_size": limit,
+                "has_more": page_obj.has_next(),
+                "total_count": paginator.count,
+                "summary": {
+                    "total_rfqs": RequestForQuotation.objects.filter(buyer=buyer).count(),
+                    "total_items": item_summary.get("total_items") or 0,
+                    "open_items": item_summary.get("open_items") or 0,
+                    "total_quotes": item_summary.get("total_quotes") or 0,
+                },
+            }
+
+            return Response({"success": True, "data": serialized, "meta": meta})
+        except ValidationError as error:
+            return return_400({"success": False, "error": str(error)})
+        except Exception as error:
+            logger.exception("Failed to fetch RFQ list: {0}".format(error))
+            return return_400({"success": False, "error": "Unable to fetch RFQs right now."})
+
+
+class GetRFQItems(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, rfq_id):
+        try:
+            buyer = request.user.buyer
+            search = (request.GET.get("q") or "").strip()
+            page = request.GET.get("page") or 1
+            default_limit = getattr(settings, "PAGINATE_BY", 10)
+            limit = request.GET.get("limit") or default_limit
+            pin_item_param = request.GET.get("pin_item_id")
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                page = 1
+            page = max(1, page)
+            try:
+                limit = int(limit)
+            except (TypeError, ValueError):
+                limit = 10
+            limit = max(1, min(limit, 100))
+            try:
+                pin_item_id = int(pin_item_param) if pin_item_param else None
+            except (TypeError, ValueError):
+                pin_item_id = None
+            rfq = (
+                RequestForQuotation.objects.filter(id=rfq_id, buyer=buyer)
+                .prefetch_related("suppliers")
+                .first()
+            )
+            if not rfq:
+                return return_400({"success": False, "error": "RFQ not found."})
+
+            items_queryset = (
+                rfq.request_for_quotation_items.all()
+                .prefetch_related("attachments", "request_for_quotation_item_response")
+                .annotate(
+                    quotes_count=Count("request_for_quotation_item_response", distinct=True),
+                )
+            )
+
+            if search:
+                items_queryset = items_queryset.filter(
+                    Q(product_name__icontains=search)
+                    | Q(specifications__icontains=search)
+                    | Q(request_for_quotation_item_response__supplier__company_name__icontains=search)
+                ).distinct()
+
+            if pin_item_id:
+                items_queryset = items_queryset.annotate(
+                    pin_position=Case(
+                        When(id=pin_item_id, then=0),
+                        default=1,
+                        output_field=IntegerField(),
+                    )
+                )
+                items_queryset = items_queryset.order_by("pin_position", "created")
+            else:
+                items_queryset = items_queryset.order_by("created")
+
+            paginator = Paginator(items_queryset, limit)
+            page_obj = paginator.get_page(page)
+            start_index = (page_obj.number - 1) * limit
+            has_open_item = items_queryset.filter(status=RequestForQuotationItems.OPEN).exists()
+
+            items = []
+            for offset, item in enumerate(page_obj.object_list, start=1):
+                attachments = [
+                    {
+                        "id": attachment.id,
+                        "filename": attachment.original_filename,
+                        "file_size": attachment.file_size,
+                        "file_type": attachment.file_type,
+                        "uploaded_at": attachment.created.isoformat(),
+                        "uploaded_by": attachment.uploaded_by.email if attachment.uploaded_by else None,
+                    }
+                    for attachment in item.attachments.all()
+                ]
+
+                items.append(
+                    {
+                        "id": item.id,
+                        "index": start_index + offset,
+                        "product_name": item.product_name,
+                        "quantity": item.quantity,
+                        "uom": item.uom,
+                        "status": "open" if item.status == RequestForQuotationItems.OPEN else "closed",
+                        "specifications": item.specifications,
+                        "expected_delivery_date": item.expected_delivery_date.isoformat()
+                        if item.expected_delivery_date
+                        else None,
+                        "quotes_count": item.quotes_count,
+                        "attachments": attachments,
+                    }
+                )
+
+            rfq_info = {
+                "id": rfq.id,
+                "title": rfq.get_display_title(),
+                "created": rfq.created.isoformat(),
+                "updated": rfq.updated.isoformat(),
+                "supplier_count": rfq.suppliers.count(),
+                "status": "open" if has_open_item else "closed",
+            }
+
+            meta = {
+                "page": page_obj.number,
+                "page_size": limit,
+                "has_more": page_obj.has_next(),
+                "total_count": paginator.count,
+                "pin_item_id": pin_item_id,
+            }
+
+            return Response({"success": True, "rfq": rfq_info, "items": items, "meta": meta})
+        except Exception as error:
+            logger.exception("Failed to fetch RFQ items: %s", error)
+            return return_400({"success": False, "error": "Unable to fetch RFQ items right now."})
+
+class UploadRFQItemAttachment(APIView):
+    permission_classes = (IsAuthenticated,)
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request, rfq_item_id):
+        try:
+            rfq_item = (
+                RequestForQuotationItems.objects.select_related("request_for_quotation__buyer")
+                .filter(id=rfq_item_id, request_for_quotation__buyer=request.user.buyer)
+                .first()
+            )
+            if not rfq_item:
+                return return_400({"success": False, "error": "RFQ item not found."})
+
+            uploaded_file = request.FILES.get("file")
+            if not uploaded_file:
+                raise ValidationError("No file uploaded.")
+
+            if rfq_item.attachments.count() >= settings.RFQ_ATTACHMENT_MAX_FILES_PER_ITEM:
+                raise ValidationError("Attachment limit reached for this item.")
+
+            file_size = uploaded_file.size
+            max_size_bytes = settings.RFQ_ATTACHMENT_MAX_SIZE_MB * 1024 * 1024
+            if file_size > max_size_bytes:
+                raise ValidationError("File exceeds maximum allowed size.")
+
+            buyer_usage_mb = rfq_item.request_for_quotation.buyer.get_used_storage_in_mb()
+            if buyer_usage_mb + (file_size / (1024 * 1024)) > settings.RFQ_ATTACHMENT_STORAGE_QUOTA_MB:
+                raise ValidationError("Attachment storage quota exceeded.")
+
+            _validate_file_extension(uploaded_file.name)
+            detected_type = _validate_mime_type(uploaded_file)
+            _scan_for_viruses_if_enabled(uploaded_file)
+
+            sanitized_filename = _sanitize_filename(uploaded_file.name)
+            uploaded_file.name = sanitized_filename
+            checksum = _compute_checksum(uploaded_file)
+
+            attachment = RFQItemAttachment.objects.create(
+                rfq_item=rfq_item,
+                file=uploaded_file,
+                original_filename=sanitized_filename,
+                file_size=file_size,
+                file_type=detected_type,
+                uploaded_by=request.user,
+                checksum=checksum,
+            )
+
+            _create_audit_log(
+                request.user,
+                AuditLog.Actions.FILE_UPLOAD,
+                "rfq_item_attachment",
+                attachment.id,
+                request,
+                {"filename": sanitized_filename, "rfq_item_id": rfq_item.id},
+            )
+
+            return Response(
+                {
+                    "success": True,
+                    "attachment": {
+                        "id": attachment.id,
+                        "filename": attachment.original_filename,
+                        "file_size": attachment.file_size,
+                        "file_type": attachment.file_type,
+                        "uploaded_at": attachment.created.isoformat(),
+                        "uploaded_by": attachment.uploaded_by.email if attachment.uploaded_by else None,
+                    },
+                }
+            )
+        except ValidationError as error:
+            return return_400({"success": False, "error": str(error)})
+        except Exception as error:
+            logger.exception("Failed to upload attachment: %s", error)
+            return return_400({"success": False, "error": "Unable to upload attachment."})
+
+
+class GetRFQItemAttachments(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, rfq_item_id):
+        try:
+            rfq_item = (
+                RequestForQuotationItems.objects.select_related("request_for_quotation__buyer")
+                .filter(id=rfq_item_id, request_for_quotation__buyer=request.user.buyer)
+                .first()
+            )
+            if not rfq_item:
+                return return_400({"success": False, "error": "RFQ item not found."})
+
+            attachments = [
+                {
+                    "id": attachment.id,
+                    "filename": attachment.original_filename,
+                    "file_size": attachment.file_size,
+                    "file_type": attachment.file_type,
+                    "uploaded_at": attachment.created.isoformat(),
+                    "uploaded_by": attachment.uploaded_by.email if attachment.uploaded_by else None,
+                }
+                for attachment in rfq_item.attachments.all()
+            ]
+            return Response({"success": True, "attachments": attachments})
+        except Exception as error:
+            logger.exception("Failed to list attachments: %s", error)
+            return return_400({"success": False, "error": "Unable to fetch attachments."})
+
+
+class DeleteRFQItemAttachment(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def delete(self, request, attachment_id):
+        try:
+            attachment = (
+                RFQItemAttachment.objects.select_related("rfq_item__request_for_quotation__buyer")
+                .filter(id=attachment_id, rfq_item__request_for_quotation__buyer=request.user.buyer)
+                .first()
+            )
+            if not attachment:
+                return return_400({"success": False, "error": "Attachment not found."})
+
+            filename = attachment.original_filename
+            rfq_item_id = attachment.rfq_item_id
+            if attachment.file:
+                attachment.file.delete(save=False)
+            attachment.delete()
+
+            _create_audit_log(
+                request.user,
+                AuditLog.Actions.FILE_DELETE,
+                "rfq_item_attachment",
+                attachment_id,
+                request,
+                {"filename": filename, "rfq_item_id": rfq_item_id},
+            )
+
+            return Response({"success": True})
+        except Exception as error:
+            logger.exception("Failed to delete attachment: %s", error)
+            return return_400({"success": False, "error": "Unable to delete attachment."})
+
+
+class DownloadRFQItemAttachment(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, attachment_id):
+        try:
+            attachment = (
+                RFQItemAttachment.objects.select_related("rfq_item__request_for_quotation__buyer")
+                .filter(id=attachment_id, rfq_item__request_for_quotation__buyer=request.user.buyer)
+                .first()
+            )
+            if not attachment:
+                return return_400({"success": False, "error": "Attachment not found."})
+
+            attachment.file.open("rb")
+            response = FileResponse(attachment.file, as_attachment=True, filename=attachment.original_filename)
+            response["Content-Type"] = attachment.file_type or "application/octet-stream"
+
+            _create_audit_log(
+                request.user,
+                AuditLog.Actions.FILE_DOWNLOAD,
+                "rfq_item_attachment",
+                attachment_id,
+                request,
+                {"filename": attachment.original_filename, "rfq_item_id": attachment.rfq_item_id},
+            )
+
+            return response
+        except Exception as error:
+            logger.exception("Failed to download attachment: %s", error)
+            return return_400({"success": False, "error": "Unable to download attachment."})
+
 
 class GetRFQ(APIView):
     """
@@ -423,26 +1027,56 @@ class GetRFQResponsePageData(APIView):
         1. GET => To get data for RFQ response page
     """
     permission_classes = (AllowAny,)
+
+    @staticmethod
+    def _get_term_value(value):
+        normalized = (value or "").strip()
+        return normalized if normalized else "No terms"
+
     def get(self,request,rfq_id,supplier_id):
         """
             API GET Method
         """
         try:
-            rfq = RequestForQuotation.objects.get(id=rfq_id)
-            supplier = rfq.suppliers.filter(id=supplier_id)
+            try:
+                supplier_uuid = UUID(str(supplier_id))
+            except ValueError:
+                raise Exception("Invalid Supplier ID")
+
+            rfq = (
+                RequestForQuotation.objects.select_related("buyer__user")
+                .prefetch_related("request_for_quotation_items")
+                .get(id=rfq_id)
+            )
+
+            supplier = rfq.suppliers.filter(id=supplier_uuid)
             if not supplier.exists():
                 raise Exception("Invalid Supplier ID")
             supplier = supplier.last()
             buyer = rfq.buyer
-            metadata = rfq.request_for_quotation_meta_data.last()
+            if not buyer:
+                raise Exception("Invalid Buyer")
+            metadata = rfq.request_for_quotation_meta_data.order_by("-created").first()
+            terms_conditions = self._get_term_value(metadata.terms_conditions if metadata else None)
+            payment_terms = self._get_term_value(metadata.payment_terms if metadata else None)
+            shipping_terms = self._get_term_value(metadata.shipping_terms if metadata else None)
+
+            responses = {
+                response.request_for_quotation_item_id: response
+                for response in RequestForQuotationItemResponse.objects.filter(
+                    request_for_quotation_item__request_for_quotation=rfq,
+                    supplier=supplier,
+                ).order_by("-created")
+            }
             data = {
                 "buyer":{
                     "company_name":buyer.company_name,
-                    "first_name":buyer.user.first_name,
-                    "last_name":buyer.user.last_name,
+                    "first_name":buyer.user.first_name if buyer.user else "",
+                    "last_name":buyer.user.last_name if buyer.user else "",
                     "gst_no":buyer.gst_no,
                     "address": buyer.address,
                     "currency":buyer.currency if buyer.currency else "USD",
+                    "licenses": getattr(buyer, "licenses", []) or [],
                 },
                 "supplier":{
                     "supplier_id":supplier.id,
@@ -452,24 +1086,24 @@ class GetRFQResponsePageData(APIView):
                     "email":supplier.email,
                     "categories": [category.name for category in supplier.categories.filter(active=True)]
                 },
-                "terms_conditions":metadata.terms_conditions,
-                "payment_terms":metadata.payment_terms,
-                "shipping_terms":metadata.shipping_terms,
+                "terms_conditions":terms_conditions,
+                "payment_terms":payment_terms,
+                "shipping_terms":shipping_terms,
                 "items":[]
             }
             for item in rfq.request_for_quotation_items.all():
-                request_response = RequestForQuotationItemResponse.objects.filter(request_for_quotation_item=item,supplier=supplier)
+                supplier_response = responses.get(item.id)
                 item_obj = {
                         "item_id": item.id,
                         "product_name":item.product_name,
                         "quantity":item.quantity,
                         "specifications":item.specifications,
                         "uom":item.uom,
-                        "responded": True if request_response.exists() else False,
-                        "supplier_price": request_response.last().price if request_response.exists() else None,
-                        "supplier_quantity": request_response.last().quantity if request_response.exists() else None,
-                        "supplier_lead_time": request_response.last().lead_time if request_response.exists() else None,
-                        "supplier_remarks": request_response.last().remarks if request_response.exists() else None,
+                        "responded": bool(supplier_response),
+                        "supplier_price": supplier_response.price if supplier_response else None,
+                        "supplier_quantity": supplier_response.quantity if supplier_response else None,
+                        "supplier_lead_time": supplier_response.lead_time if supplier_response else None,
+                        "supplier_remarks": supplier_response.remarks if supplier_response else None,
                         "status":item.get_status_display(),
                         "expected_delivery_date":item.expected_delivery_date.strftime("%d/%b/%Y") if item.expected_delivery_date else None,
                     }
@@ -827,6 +1461,7 @@ class CreateRFQResponse(APIView):
             if not items:
                 raise Exception("Items not provided")
             body = []
+            focus_item_id = None
             for _,item in enumerate(items):
                 rfq_item = rfq.request_for_quotation_items.filter(id=item.get("rfq_item_id"))
                 if not rfq_item.exists():
@@ -843,12 +1478,14 @@ class CreateRFQResponse(APIView):
                 rfq_response.lead_time = item.get("supplier_lead_time")
                 rfq_response.remarks = item.get("supplier_remarks")
                 rfq_response.save()
+                if not focus_item_id:
+                    focus_item_id = rfq_item.id
             email_obj = {
                 "to" : [supplier.buyer.user.email],
                 "cc" : [supplier.email],
                 "subject": "New quotation received",
                 "supplier_name":str(supplier.company_name),
-                "url":f"{settings.FRONTEND_URL}"
+                "url":self._build_rfq_redirect_url(rfq.id, focus_item_id)
             }
             if settings.USE_CELERY:
                 CeleryEmailManager.new_rfq_response_alert.delay(email_obj)
@@ -857,6 +1494,15 @@ class CreateRFQResponse(APIView):
             return Response({"success":True})    
         except Exception as error:
             return return_400({"success":False,"error":f"{error}"})
+
+    def _build_rfq_redirect_url(self, rfq_id, item_id):
+        base_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        if not base_url:
+            base_url = ""
+        rfq_url = f"{base_url}/rfq/{rfq_id}/items"
+        if item_id:
+            return f"{rfq_url}?item_id={item_id}"
+        return rfq_url
 
 class RFQItemData(APIView):
     """
@@ -949,6 +1595,7 @@ class RFQItemData(APIView):
             if data.get("bought_price"):
                 response.bought_price = data.get("bought_price")
             
+            buyer_timezone = get_buyer_timezone(buyer)
             email_obj = {
                 "to" : [response.supplier.email],
                 "cc" : [buyer.user.email],
@@ -960,7 +1607,7 @@ class RFQItemData(APIView):
                 "quantity": str(response.bought_quantity) + ' ' + str(rfq_item.uom),
                 "lead_time": response.lead_time if response.lead_time else "",
                 "buyer_name": buyer.company_name,
-                "order_date": datetime.now().strftime("%d %b %Y"),
+                "order_date": format_date_for_timezone(timezone.now(), buyer_timezone),
                 "shipping_terms": meta_data.shipping_terms,
                 "currency": buyer.currency,
                 "terms_and_conditions": meta_data.terms_conditions,
@@ -1063,6 +1710,7 @@ class SendRFQReminder(APIView):
                 raise ValueError("You don't have permission to send reminders for this RFQ")
 
             suppliers_to_remind = []
+            buyer_timezone = get_buyer_timezone(buyer)
             for supplier in rfq.suppliers.all():
                 if not RequestForQuotationItemResponse.objects.filter(
                     request_for_quotation_item=rfq_item,
@@ -1086,7 +1734,10 @@ class SendRFQReminder(APIView):
                     "quantity": rfq_item.quantity,
                     "uom": rfq_item.uom,
                     "specifications": rfq_item.specifications,
-                    "expected_delivery_date": rfq_item.expected_delivery_date.strftime("%d %b %Y") if rfq_item.expected_delivery_date else "Not specified",
+                    "expected_delivery_date": format_date_for_timezone(
+                        rfq_item.expected_delivery_date, buyer_timezone
+                    )
+                    or "Not specified",
                     "rfq_response_url": rfq_response_url + str(supplier.id)
                 }
 
@@ -1252,6 +1903,40 @@ class DashboardStats(APIView):
             
             # Return a more informative error response
             return return_400({"success": False, "error": str(error), "message": "Error generating dashboard statistics"})
+
+
+class GetSubscriptionStatus(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        buyer = getattr(request.user, "buyer", None)
+        if not buyer or not buyer.subscription_expiry_date:
+            return return_400({"success": False, "error": "Subscription data unavailable."})
+
+        now = timezone.now()
+        expiry = buyer.subscription_expiry_date
+        grace_delta = timedelta(days=settings.SUBSCRIPTION_GRACE_PERIOD_DAYS)
+        grace_ends_at = expiry + grace_delta
+
+        is_active = now <= expiry
+        is_in_grace = not is_active and now <= grace_ends_at
+        days_left = max((grace_ends_at - now).days, 0)
+
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "is_active": is_active,
+                    "is_in_grace_period": is_in_grace,
+                    "expiry_date": expiry.isoformat(),
+                    "grace_ends_at": grace_ends_at.isoformat(),
+                    "days_left": days_left,
+                    "subscription_expired": not (is_active or is_in_grace),
+                    "is_test_user": buyer.test_user,
+                    "variant": buyer.onboarding_variant,
+                },
+            }
+        )
 def TestEmail(request):
     obj={
         'items': [

@@ -1,7 +1,10 @@
-import re,os
+import re, os
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import get_template
+from django.utils import timezone as django_timezone
 from api.models import Buyer
 import pandas as pd
 import logging
@@ -12,11 +15,62 @@ from django.utils.html import strip_tags
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+DEFAULT_USER_TIMEZONE = getattr(settings, "DEFAULT_USER_TIMEZONE", "Asia/Kolkata")
+
 def check_string(string,variable_name=None):
     pattern = r"^[a-zA-Z0-9\s_.,%'-@]*$"
     if not bool(re.match(pattern, string)):
         raise Exception(f"Not a valid string value : {variable_name}")
     return string
+
+def _resolve_timezone_name(timezone_name: str | None) -> str:
+    if timezone_name:
+        return timezone_name
+    return DEFAULT_USER_TIMEZONE
+
+def _get_zoneinfo(timezone_name: str | None) -> ZoneInfo:
+    resolved_name = _resolve_timezone_name(timezone_name)
+    try:
+        return ZoneInfo(resolved_name)
+    except Exception:
+        return ZoneInfo(DEFAULT_USER_TIMEZONE)
+
+def convert_datetime_to_user_timezone(value, timezone_name: str | None):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    if not isinstance(value, datetime):
+        return value
+    date_value = value
+    if django_timezone.is_naive(date_value):
+        date_value = django_timezone.make_aware(date_value, ZoneInfo(settings.TIME_ZONE))
+    return date_value.astimezone(_get_zoneinfo(timezone_name))
+
+def format_datetime_for_timezone(value, timezone_name: str | None, fmt: str = "%d %b %Y %I:%M %p"):
+    converted_value = convert_datetime_to_user_timezone(value, timezone_name)
+    if isinstance(converted_value, datetime):
+        return converted_value.strftime(fmt)
+    return converted_value
+
+def format_date_for_timezone(value, timezone_name: str | None, fmt: str = "%d %b %Y"):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return format_datetime_for_timezone(value, timezone_name, fmt)
+    if isinstance(value, date):
+        combined_value = datetime.combine(value, time.min)
+        return format_datetime_for_timezone(combined_value, timezone_name, fmt)
+    return str(value)
+
+def get_buyer_timezone(buyer: Buyer | None) -> str:
+    if not buyer:
+        return DEFAULT_USER_TIMEZONE
+    buyer_timezone = getattr(buyer, "timezone", None)
+    return _resolve_timezone_name(buyer_timezone)
 
 def get_all_rfq_data(buyer):
     rfq_lists = buyer.request_for_quotations.all()

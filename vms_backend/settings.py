@@ -15,6 +15,10 @@ from datetime import timedelta
 import os
 import sentry_sdk
 
+
+def get_bool_env(var_name: str, default: bool = False) -> bool:
+    return os.getenv(var_name, str(default)).lower() in ("true", "1", "yes")
+
 sentry_sdk.init(
     dsn="https://ed110c3ce77300599b173ffa2ec853d5@o4504682555047936.ingest.us.sentry.io/4508813166641152",
     # Add data like request headers and IP for users,
@@ -74,6 +78,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'api.middleware.SubscriptionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -188,9 +193,30 @@ DEFAULT_EMAIL_CC_LIST = []
 DEFAULT_EMAIL_BCC_LIST = [""]
 SEND_EMAILS = True
 
-# Media Folder Setting
+SUBSCRIPTION_GRACE_PERIOD_DAYS = int(os.getenv("SUBSCRIPTION_GRACE_PERIOD_DAYS", 3))
+SUBSCRIPTION_PAYWALL_PERCENT = int(os.getenv("SUBSCRIPTION_PAYWALL_PERCENT", 10))
+ONBOARDING_TRIAL_DAYS = int(os.getenv("ONBOARDING_TRIAL_DAYS", 45))
+
+RFQ_ATTACHMENT_MAX_SIZE_MB = int(os.getenv("RFQ_ATTACHMENT_MAX_SIZE_MB", 5))
+RFQ_ATTACHMENT_MAX_FILES_PER_ITEM = int(os.getenv("RFQ_ATTACHMENT_MAX_FILES_PER_ITEM", 5))
+RFQ_ATTACHMENT_STORAGE_QUOTA_MB = int(os.getenv("RFQ_ATTACHMENT_STORAGE_QUOTA_MB", 100))
+RFQ_ATTACHMENT_VIRUS_SCAN_ENABLED = get_bool_env("RFQ_ATTACHMENT_VIRUS_SCAN_ENABLED", False)
+
+# Media / Storage Settings
+USE_S3_FOR_MEDIA = get_bool_env("USE_S3_FOR_MEDIA", False)
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(BASE_DIR,"media")
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
+if USE_S3_FOR_MEDIA:
+    AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "ap-south-1")
+    AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN")
+    AWS_S3_OBJECT_PARAMETERS = {
+        "CacheControl": "max-age=86400",
+    }
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+    domain = AWS_S3_CUSTOM_DOMAIN or f"{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com"
+    MEDIA_URL = f"https://{domain}/"
 
 CALCOM_API_KEY = "cal_live_9f77cbdc001a94d1a4608fda01cc20d8"
 CALCOM_ENABLE_AUTO_BOOKING = False
