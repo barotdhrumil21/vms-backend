@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import authenticate
-import json, base64, logging
+import json, base64, logging, smtplib
 from api.helper import check_string
 from django.conf import settings
 from authentication.utils import return_400, get_tokens_for_user
@@ -122,6 +122,21 @@ class GetUserDetailsAPI(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"An unexpected error occured : {error}"})
         
+def send_signup_email(email_payload):
+    """
+    Safely send the welcome email without interrupting the signup flow.
+    """
+    try:
+        if settings.USE_CELERY:
+            CeleryEmailManager.new_user_signup.delay(email_payload)
+            return
+        EmailManager.new_user_signup(email_payload)
+    except smtplib.SMTPException as smtp_error:
+        logging.exception("SMTP error while dispatching signup email: %s", smtp_error)
+    except Exception as error:
+        logging.exception("Unexpected error while dispatching signup email: %s", error)
+
+
 class SignUpView(APIView):
     def post(self, request):
         try:
@@ -171,13 +186,7 @@ class SignUpView(APIView):
                 "username": email,
                 "password": password
             }
-            try:
-                if settings.USE_CELERY:
-                    CeleryEmailManager.new_user_signup.delay(email_obj)
-                else:
-                    EmailManager.new_user_signup(email_obj)
-            except Exception as email_error:
-                logging.error(f"Failed to send welcome email to {email}: {email_error}")
+            send_signup_email(email_obj)
 
             # Schedule a Cal.com booking for demo
             if getattr(settings, 'CALCOM_ENABLE_AUTO_BOOKING', False):
