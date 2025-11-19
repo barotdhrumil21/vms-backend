@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import authenticate
-import json, base64, logging
+import json, base64, logging, smtplib
 from api.helper import check_string
 from django.conf import settings
 from authentication.utils import return_400, get_tokens_for_user
@@ -176,8 +176,18 @@ class SignUpView(APIView):
                     CeleryEmailManager.new_user_signup.delay(email_obj)
                 else:
                     EmailManager.new_user_signup(email_obj)
+            except smtplib.SMTPException as email_error:
+                logging.error(
+                    "SMTP delivery failed for welcome email to %s: %s",
+                    email,
+                    email_error,
+                )
             except Exception as email_error:
-                logging.error(f"Failed to send welcome email to {email}: {email_error}")
+                logging.error(
+                    "Unexpected error while sending welcome email to %s: %s",
+                    email,
+                    email_error,
+                )
 
             # Schedule a Cal.com booking for demo
             if getattr(settings, 'CALCOM_ENABLE_AUTO_BOOKING', False):
