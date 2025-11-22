@@ -60,6 +60,7 @@ class RFQHierarchyTests(APITestCase):
         payload = response.json()
         self.assertTrue(payload["success"])
         self.assertEqual(len(payload["data"]), 1)
+        self.assertTrue(payload["meta"]["has_rfqs"])
         summary = payload["meta"]["summary"]
         self.assertEqual(summary["total_rfqs"], 1)
         self.assertEqual(summary["total_items"], 1)
@@ -71,6 +72,16 @@ class RFQHierarchyTests(APITestCase):
         response = self.client.get(reverse("get-rfq-list"), {"status": "open"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.json()["data"]), 0)
+        self.assertTrue(response.json()["meta"]["has_rfqs"])
+
+    def test_get_rfq_list_marks_empty_accounts(self):
+        RequestForQuotation.objects.all().delete()
+        response = self.client.get(reverse("get-rfq-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["data"]), 0)
+        self.assertFalse(payload["meta"]["has_rfqs"])
 
     def test_get_rfq_items_returns_attachments(self):
         response = self.client.get(reverse("get-rfq-items", args=[self.rfq.id]))
