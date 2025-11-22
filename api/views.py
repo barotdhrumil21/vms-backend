@@ -546,8 +546,9 @@ class GetRFQList(APIView):
             page = int(request.GET.get("page", 1))
             limit = int(request.GET.get("limit", 10))
 
+            buyer_rfqs = RequestForQuotation.objects.filter(buyer=buyer)
             rfqs = (
-                RequestForQuotation.objects.filter(buyer=buyer)
+                buyer_rfqs
                 .annotate(
                     item_count=Count("request_for_quotation_items", distinct=True),
                     open_item_count=Count(
@@ -632,14 +633,15 @@ class GetRFQList(APIView):
                 open_items=Count("id", filter=Q(status=RequestForQuotationItems.OPEN)),
                 total_quotes=Count("request_for_quotation_item_response", distinct=True),
             )
-
+            total_rfqs = buyer_rfqs.count()
             meta = {
                 "page": page_obj.number,
                 "page_size": limit,
                 "has_more": page_obj.has_next(),
+                "has_rfqs": total_rfqs > 0,
                 "total_count": paginator.count,
                 "summary": {
-                    "total_rfqs": RequestForQuotation.objects.filter(buyer=buyer).count(),
+                    "total_rfqs": total_rfqs,
                     "total_items": item_summary.get("total_items") or 0,
                     "open_items": item_summary.get("open_items") or 0,
                     "total_quotes": item_summary.get("total_quotes") or 0,

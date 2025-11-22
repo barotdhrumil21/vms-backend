@@ -122,6 +122,21 @@ class GetUserDetailsAPI(APIView):
         except Exception as error:
             return return_400({"success":False,"error":f"An unexpected error occured : {error}"})
         
+def send_signup_email(email_payload):
+    """
+    Safely send the welcome email without interrupting the signup flow.
+    """
+    try:
+        if settings.USE_CELERY:
+            CeleryEmailManager.new_user_signup.delay(email_payload)
+            return
+        EmailManager.new_user_signup(email_payload)
+    except smtplib.SMTPException as smtp_error:
+        logging.exception("SMTP error while dispatching signup email: %s", smtp_error)
+    except Exception as error:
+        logging.exception("Unexpected error while dispatching signup email: %s", error)
+
+
 class SignUpView(APIView):
     def post(self, request):
         try:
