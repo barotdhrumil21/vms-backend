@@ -1294,7 +1294,8 @@ class GetSuppliers(APIView):
                     Q(company_name__icontains=search) |
                     Q(person_of_contact__icontains=search) |
                     Q(phone_no__icontains=search) |
-                    Q(email__icontains=search)
+                    Q(email__icontains=search) |
+                    Q(categories__name__icontains=search, categories__active=True)
                 )
                 
             for supplier in recent_suppliers:
@@ -1325,7 +1326,8 @@ class GetSuppliers(APIView):
                         Q(company_name__icontains=search) |
                         Q(person_of_contact__icontains=search) |
                         Q(phone_no__icontains=search) |
-                        Q(email__icontains=search)
+                        Q(email__icontains=search) |
+                        Q(categories__name__icontains=search, categories__active=True)
                     )
                 else:
                     suppliers_rfq = rfq.suppliers.all().order_by('-created')
@@ -1353,7 +1355,8 @@ class GetSuppliers(APIView):
                     Q(company_name__icontains=search) |
                     Q(person_of_contact__icontains=search) |
                     Q(phone_no__icontains=search) |
-                    Q(email__icontains=search)
+                    Q(email__icontains=search) |
+                    Q(categories__name__icontains=search, categories__active=True)
                 )
             else:
                 remaining_suppliers = all_suppliers
