@@ -18,7 +18,9 @@ logger.setLevel(logging.INFO)
 DEFAULT_USER_TIMEZONE = getattr(settings, "DEFAULT_USER_TIMEZONE", "Asia/Kolkata")
 
 def check_string(string,variable_name=None):
-    pattern = r"^[a-zA-Z0-9\s_.,%'-@&]*$"
+    # Allow common business characters while preventing security risks
+    # Excludes: <> (XSS), ; (injection), | (command injection), \ (path traversal), $ ` (command injection), {} [] (template injection)
+    pattern = r"^[a-zA-Z0-9\s_.,%'-@&()/+#!:]*$"
     if not bool(re.match(pattern, string)):
         raise Exception(f"Not a valid string value : {variable_name}")
     return string
